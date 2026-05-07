@@ -1,0 +1,119 @@
+.PHONY: help up down build rebuild logs shell migrate seed health lint test
+
+# Default target
+help:
+	@echo "AIAquafarm - Smart RAS Aquaculture Platform"
+	@echo ""
+	@echo "Usage: make [target]"
+	@echo ""
+	@echo "Infrastructure:"
+	@echo "  up           Start all services (detached)"
+	@echo "  down         Stop all services"
+	@echo "  build        Build all Docker images"
+	@echo "  rebuild      Rebuild images without cache"
+	@echo "  restart      Restart all services"
+	@echo "  logs         Tail logs for all services"
+	@echo "  logs-backend Tail backend logs only"
+	@echo "  logs-agents  Tail agents logs only"
+	@echo "  ps           Show running containers"
+	@echo ""
+	@echo "Development:"
+	@echo "  dev          Start in development mode"
+	@echo "  shell        Open shell in backend container"
+	@echo "  migrate      Run Alembic DB migrations"
+	@echo "  makemigration MSG='...' Create new migration"
+	@echo "  seed         Seed test data into database"
+	@echo "  health       Check all service health"
+	@echo ""
+	@echo "Code Quality:"
+	@echo "  lint         Run ruff linter"
+	@echo "  format       Run ruff formatter"
+	@echo "  test         Run backend tests"
+	@echo "  test-cov     Run tests with coverage"
+	@echo ""
+	@echo "Setup:"
+	@echo "  setup        Initial project setup"
+	@echo "  clean        Remove containers, volumes, images"
+
+# ── Infrastructure ────────────────────────────────────────────
+
+up:
+	docker compose up -d
+
+down:
+	docker compose down
+
+build:
+	docker compose build
+
+rebuild:
+	docker compose build --no-cache
+
+restart:
+	docker compose restart
+
+logs:
+	docker compose logs -f
+
+logs-backend:
+	docker compose logs -f backend
+
+logs-agents:
+	docker compose logs -f agents
+
+logs-frontend:
+	docker compose logs -f frontend
+
+ps:
+	docker compose ps
+
+# ── Development ───────────────────────────────────────────────
+
+dev:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+shell:
+	docker compose exec backend bash
+
+shell-agents:
+	docker compose exec agents bash
+
+migrate:
+	docker compose exec backend alembic upgrade head
+
+makemigration:
+	docker compose exec backend alembic revision --autogenerate -m "$(MSG)"
+
+seed:
+	docker compose exec backend python scripts/seed_data.py
+
+health:
+	python scripts/health_check.py
+
+# ── Code Quality ──────────────────────────────────────────────
+
+lint:
+	cd backend && ruff check app/ tests/
+	cd agents && ruff check .
+	cd ai_modules && ruff check .
+
+format:
+	cd backend && ruff format app/ tests/
+	cd agents && ruff format .
+	cd ai_modules && ruff format .
+
+test:
+	docker compose exec backend pytest tests/ -v
+
+test-cov:
+	docker compose exec backend pytest tests/ -v --cov=app --cov-report=html
+
+# ── Setup ─────────────────────────────────────────────────────
+
+setup:
+	@bash scripts/setup.sh
+
+clean:
+	docker compose down -v --rmi local
+	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find . -type f -name "*.pyc" -delete

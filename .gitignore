@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+.venv
+*.egg-info/
+dist/
+build/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node / Frontend
+node_modules/
+dist/
+.DS_Store
+*.local
+
+# Docker
+.docker/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Data
+*.csv
+*.parquet
+data/raw/
+data/processed/
+
+# Models
+*.pt
+*.pth
+*.onnx
+*.pkl
+
+# Secrets
+*.pem
+*.key
+secrets/
+
+# Logs
+logs/
+*.log

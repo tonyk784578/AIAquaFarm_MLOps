@@ -1,0 +1,47 @@
+version: "3.9"
+
+# Development overrides: hot-reload, debug ports, volume mounts
+services:
+  backend:
+    build:
+      context: ./backend
+      target: development
+    environment:
+      DEBUG: "true"
+      LOG_LEVEL: debug
+    volumes:
+      - ./backend:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  agents:
+    volumes:
+      - ./agents:/app
+    command: python -m agents.management_agent.graph
+
+  frontend:
+    build:
+      context: ./frontend
+      target: development
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    command: npm run dev -- --host 0.0.0.0
+
+  mlops_worker:
+    volumes:
+      - ./mlops:/app
+    command: python -m mlops.data_collector.sensor_collector
+
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  mlflow:
+    ports:
+      - "5000:5000"

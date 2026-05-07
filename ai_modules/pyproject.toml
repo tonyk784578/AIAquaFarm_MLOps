@@ -1,0 +1,39 @@
+[project]
+name = "aquafarm-ai-modules"
+version = "0.1.0"
+description = "AIAquafarm RASbit AI modules — growth, feeding, water quality inference"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
+    "torch>=2.3.0",
+    "mlflow>=2.13.0",
+    "pydantic>=2.7.0",
+    "structlog>=24.2.0",
+]
+
+[project.optional-dependencies]
+vision = [
+    "torchvision>=0.18.0",
+    "opencv-python-headless>=4.10.0",
+    "ultralytics>=8.2.0",
+]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.5.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ai_modules"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

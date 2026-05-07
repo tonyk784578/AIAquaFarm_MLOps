@@ -1,0 +1,179 @@
+version: "3.9"
+
+# Shared environment variables for all backend services
+x-backend-env: &backend-env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${POSTGRES_DB:-aquafarm}
+  POSTGRES_USER: ${POSTGRES_USER:-aquafarm}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aquafarm_secret}
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aquafarm}:${POSTGRES_PASSWORD:-aquafarm_secret}@postgres:5432/${POSTGRES_DB:-aquafarm}
+  REDIS_URL: redis://redis:6379/0
+  MLFLOW_TRACKING_URI: http://mlflow:5000
+
+services:
+  # ── Data Layer ─────────────────────────────────────────────
+
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: aquafarm_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aquafarm}
+      POSTGRES_USER: ${POSTGRES_USER:-aquafarm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aquafarm_secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aquafarm} -d ${POSTGRES_DB:-aquafarm}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: aquafarm_redis
+    restart: unless-stopped
+    command: redis-server /usr/local/etc/redis/redis.conf
+    volumes:
+      - redis_data:/data
+      - ./infra/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── MLOps Layer ────────────────────────────────────────────
+
+  mlflow:
+    build:
+      context: ./infra/mlflow
+    container_name: aquafarm_mlflow
+    restart: unless-stopped
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql://${POSTGRES_USER:-aquafarm}:${POSTGRES_PASSWORD:-aquafarm_secret}@postgres:5432/${POSTGRES_DB:-aquafarm}_mlflow
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: /mlflow/artifacts
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Application Layer ──────────────────────────────────────
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: production
+    container_name: aquafarm_backend
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+      SECRET_KEY: ${SECRET_KEY:-dev_secret_key_change_in_production}
+      DEBUG: ${DEBUG:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000","http://localhost"]}
+    volumes:
+      - ./scripts:/app/scripts:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  agents:
+    build:
+      context: ./agents
+    container_name: aquafarm_agents
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      BACKEND_URL: http://backend:8000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  mlops_worker:
+    build:
+      context: ./mlops
+    container_name: aquafarm_mlops
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-aquafarm-datalake}
+    volumes:
+      - mlops_data:/data
+    depends_on:
+      mlflow:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      target: production
+    container_name: aquafarm_frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+      VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8000}
+
+  # ── Gateway ────────────────────────────────────────────────
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: aquafarm_nginx
+    restart: unless-stopped
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+      - frontend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres_data:
+  redis_data:
+  mlflow_artifacts:
+  mlops_data:
+
+networks:
+  default:
+    name: aquafarm_network
+    driver: bridge
