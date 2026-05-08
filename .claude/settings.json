@@ -1,7 +1,37 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(npm --version)",
+      "Bash(npm install *)",
+      "Bash(python3 -c \"import sys; sys.path.insert\\(0,'backend'\\); from app.main import app; print\\('OK'\\)\")",
+      "Bash(pip install *)",
+      "Bash(pip3 install *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tests/test_api_extended.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('tests/test_api_extended.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('app/services/monitoring_service.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/api/v1/ws_monitoring.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/api/v1/alerts.py'\\).read\\(\\)\\); print\\('all OK'\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(python -m ruff check app/ tests/)",
+      "Bash(python -m ruff check .)",
+      "Bash(python3 -m ruff --version)",
+      "Bash(ruff --version)",
+      "Bash(ruff check *)",
+      "Bash(awk -F: '{print $1}')",
+      "Bash(python -m ruff check backend/app/ agents/ --select E,F,I,N,W,UP,B)",
+      "Bash(python3 -m ruff check backend/app/ agents/)",
+      "Bash(python -m ruff check backend/ agents/ ai_modules/ --select E,F,W --statistics)",
+      "Bash(python3 -m ruff check backend/ agents/ ai_modules/ --statistics)",
+      "Bash(python3 -m ruff check backend/ agents/ ai_modules/)",
+      "Bash(python3 -m ruff check backend/ agents/ ai_modules/ --fix)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(npm ci *)",
+      "Bash(make build *)",
+      "Bash(node_modules/.bin/vite build *)",
+      "Bash(kill %1)",
+      "Bash(wait %1)",
+      "Bash(make migrate *)",
+      "Bash(make seed *)",
+      "Bash(curl -s http://localhost:8000/health)"
     ]
   }
 }

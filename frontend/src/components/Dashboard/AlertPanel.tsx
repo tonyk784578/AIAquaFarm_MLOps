@@ -1,8 +1,6 @@
-// Alert panel — displays recent active alerts with severity badges.
-// TODO (Phase 2): Add resolve button per alert.
-// TODO (Phase 3): Subscribe to WebSocket for real-time alert push.
-
-import { AlertTriangle } from 'lucide-react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { AlertTriangle, CheckCircle } from 'lucide-react'
+import { resolveAlert } from '@/services/api'
 import type { Alert } from '@/types'
 
 interface Props {
@@ -18,6 +16,17 @@ const CATEGORY_LABELS: Record<string, string> = {
 }
 
 export default function AlertPanel({ alerts }: Props) {
+  const qc = useQueryClient()
+
+  const resolveMut = useMutation({
+    mutationFn: (id: number) => resolveAlert(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['dashboard-summary'] })
+      qc.invalidateQueries({ queryKey: ['alerts'] })
+      qc.invalidateQueries({ queryKey: ['alerts-header'] })
+    },
+  })
+
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-4">
@@ -34,7 +43,7 @@ export default function AlertPanel({ alerts }: Props) {
 
       {alerts.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-32 text-slate-500">
-          <span className="text-2xl mb-1">✓</span>
+          <CheckCircle className="w-8 h-8 mb-1 text-emerald-500/40" />
           <span className="text-sm">활성 알림 없음</span>
         </div>
       ) : (
@@ -54,21 +63,29 @@ export default function AlertPanel({ alerts }: Props) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 mb-0.5">
                     <span
-                      className={
+                      className={`text-xs px-1.5 py-0.5 rounded font-medium ${
                         alert.severity === 'critical'
-                          ? 'badge-critical'
+                          ? 'bg-red-500/20 text-red-400'
                           : alert.severity === 'warning'
-                          ? 'badge-warning'
-                          : 'badge-info'
-                      }
+                          ? 'bg-yellow-500/20 text-yellow-400'
+                          : 'bg-slate-600 text-slate-400'
+                      }`}
                     >
                       {CATEGORY_LABELS[alert.category] ?? alert.category}
                     </span>
-                    <span className="text-xs text-slate-400">{alert.tank_id}</span>
+                    <span className="text-xs text-slate-500">{alert.tank_id}</span>
                   </div>
                   <p className="font-medium text-slate-200 truncate">{alert.title}</p>
                   <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">{alert.message}</p>
                 </div>
+                <button
+                  onClick={() => resolveMut.mutate(alert.id)}
+                  disabled={resolveMut.isPending}
+                  title="해결"
+                  className="shrink-0 p-1 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-400/10 transition-colors disabled:opacity-40"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                </button>
               </div>
             </div>
           ))}

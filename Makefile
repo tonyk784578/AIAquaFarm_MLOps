@@ -88,7 +88,12 @@ seed:
 	docker compose exec backend python scripts/seed_data.py
 
 health:
-	python scripts/health_check.py
+	@echo "\nAIAquafarm Service Health Check\n"
+	@curl -sf http://localhost:8000/health > /dev/null && echo "  ✓ Backend API      (localhost:8000)" || echo "  ✗ Backend API      (localhost:8000)"
+	@curl -sf http://localhost:5000/health > /dev/null && echo "  ✓ MLflow           (localhost:5000)" || echo "  ✗ MLflow           (localhost:5000)"
+	@curl -sf http://localhost/agents/health > /dev/null && echo "  ✓ Agents           (localhost/agents)" || echo "  ✗ Agents           (localhost/agents)"
+	@curl -sf http://localhost/health     > /dev/null && echo "  ✓ Nginx gateway    (localhost:80)"   || echo "  ✗ Nginx gateway    (localhost:80)"
+	@echo ""
 
 # ── Code Quality ──────────────────────────────────────────────
 

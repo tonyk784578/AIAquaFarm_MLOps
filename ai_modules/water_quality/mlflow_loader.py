@@ -6,7 +6,6 @@ accompanying FeatureScaler artefact stored in the same run.
 
 from __future__ import annotations
 
-from pathlib import Path
 import tempfile
 
 import mlflow

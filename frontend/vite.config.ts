@@ -15,6 +15,12 @@ export default defineConfig({
       '/api': {
         target: process.env.VITE_API_BASE_URL || 'http://localhost:8000',
         changeOrigin: true,
+        ws: true,   // proxy WebSocket connections (/api/v1/ws/*)
+      },
+      '/agents': {
+        target: process.env.VITE_AGENT_BASE_URL || 'http://localhost:8001',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/agents/, ''),
       },
     },
   },

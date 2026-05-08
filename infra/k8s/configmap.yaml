@@ -1,0 +1,20 @@
+# Shared non-secret configuration for all backend services.
+# Secrets (passwords, API keys) live in secrets.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aquafarm-config
+  namespace: aquafarm
+data:
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: aquafarm
+  POSTGRES_USER: aquafarm
+  DATABASE_URL: postgresql+asyncpg://aquafarm:$(POSTGRES_PASSWORD)@postgres:5432/aquafarm
+  REDIS_URL: redis://redis:6379/0
+  MLFLOW_TRACKING_URI: http://mlflow:5000
+  BACKEND_URL: http://backend:8000
+  LOG_LEVEL: info
+  DEBUG: "false"
+  SENSOR_POLL_INTERVAL: "5"
+  DEFAULT_TANK_IDS: '["tank_01","tank_02","tank_03"]'

@@ -82,7 +82,7 @@ class SizeEstimator:
         """
         if not lengths_cm:
             return 0.0
-        total_weight_g = sum(self.length_to_weight_g(l) for l in lengths_cm)
+        total_weight_g = sum(self.length_to_weight_g(lc) for lc in lengths_cm)
         detected = len(lengths_cm)
         total = fish_count or detected
         # Scale up if not all fish were detected

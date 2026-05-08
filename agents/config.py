@@ -23,6 +23,10 @@ class AgentSettings(BaseSettings):
     # Services
     backend_url: str = "http://backend:8000"
     redis_url: str = "redis://redis:6379/0"
+    backend_api_key: str = Field(
+        default="",
+        description="Shared secret sent as X-Service-Key header to the backend API.",
+    )
 
     # Agent behaviour
     max_agent_iterations: int = 10

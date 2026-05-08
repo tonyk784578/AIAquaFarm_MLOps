@@ -3,16 +3,16 @@
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from alembic import context
 from app.config import get_settings
 from app.db.session import Base
 
 # Import all models to ensure they are registered on Base.metadata
-from app.models import alert, feeding, fish_growth, water_quality  # noqa: F401
+from app.models import alert, feeding, fish_growth, user, water_quality  # noqa: F401
 
 config = context.config
 settings = get_settings()

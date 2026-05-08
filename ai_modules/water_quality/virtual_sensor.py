@@ -6,7 +6,7 @@ checks, and returns a VirtualSensorPrediction with 95% CI bounds.
 """
 
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 import numpy as np
@@ -16,7 +16,7 @@ from ai_modules.water_quality.feature_engineering import (
     FEATURE_DEFAULTS,
     FeatureScaler,
 )
-from ai_modules.water_quality.model import FEATURE_NAMES, SEQ_LEN, WaterQualityPredictionModel
+from ai_modules.water_quality.model import SEQ_LEN, WaterQualityPredictionModel
 from ai_modules.water_quality.schemas import VirtualSensorPrediction, WaterQualityFeatures
 
 logger = structlog.get_logger()

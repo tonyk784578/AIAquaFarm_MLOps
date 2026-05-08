@@ -12,17 +12,20 @@ GET  /api/v1/water-quality/model-status
     Return model load status, version, and scaler info.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from ai_modules.water_quality.schemas import (
     ForecastResponse,
     ModelStatusResponse,
     PredictRequest,
     PredictResponse,
 )
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.db.session import get_db
-from app.services.water_quality_service import WaterQualityInferenceEngine, WaterQualityService
+from app.services.water_quality_service import (
+    WaterQualityInferenceEngine,
+    WaterQualityService,
+)
 
 router = APIRouter()
 

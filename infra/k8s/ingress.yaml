@@ -1,0 +1,60 @@
+# Nginx Ingress Controller routes:
+#   /          → frontend:80    (React dashboard)
+#   /api/      → backend:8000   (FastAPI REST + WebSocket)
+#   /agents/   → agents:8001    (LangGraph agent API)
+#   /mlflow/   → mlflow:5000    (MLflow UI — restrict access in prod)
+#
+# Requires nginx-ingress-controller:
+#   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+#
+# For WebSocket support (/api/v1/ws/) the annotations below enable proxy buffering off.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aquafarm-ingress
+  namespace: aquafarm
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"   # required for WebSocket + SSE
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"   # allow model uploads
+    # Uncomment to enable TLS via cert-manager:
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  # tls:
+  #   - hosts:
+  #       - aquafarm.example.com
+  #     secretName: aquafarm-tls
+  rules:
+    - host: aquafarm.example.com  # replace with actual domain or use IP
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: /agents
+            pathType: Prefix
+            backend:
+              service:
+                name: agents
+                port:
+                  number: 8001
+          - path: /mlflow
+            pathType: Prefix
+            backend:
+              service:
+                name: mlflow
+                port:
+                  number: 5000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

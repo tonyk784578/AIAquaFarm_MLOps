@@ -32,8 +32,9 @@ FROM base AS production
 COPY ai_modules/ /app/ai_modules/
 RUN pip install /app/ai_modules
 
+# Install backend dependencies first (cacheable layer — only re-runs when pyproject.toml changes)
 COPY backend/pyproject.toml /app/pyproject.toml
-RUN pip install --no-deps .
+RUN pip install .
 
 COPY backend/ /app/
 

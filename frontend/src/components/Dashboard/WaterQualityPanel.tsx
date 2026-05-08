@@ -14,7 +14,7 @@ import {
 } from 'recharts'
 import { getWaterQualityHistory } from '@/services/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import type { WaterQualityReading, WSMessage } from '@/types'
+import type { WaterQualityReading } from '@/types'
 
 interface Props {
   data: WaterQualityReading | null
@@ -98,9 +98,9 @@ export default function WaterQualityPanel({ data: initialData, tankId }: Props) 
           <h2 className="font-medium text-slate-200">수질 모니터링</h2>
           {tankId && (
             wsStatus === 'connected' ? (
-              <Wifi className="w-3 h-3 text-emerald-400" title="실시간 연결됨" />
+              <Wifi className="w-3 h-3 text-emerald-400" aria-label="실시간 연결됨" />
             ) : (
-              <WifiOff className="w-3 h-3 text-slate-500" title="WebSocket 연결 없음" />
+              <WifiOff className="w-3 h-3 text-slate-500" aria-label="WebSocket 연결 없음" />
             )
           )}
         </div>

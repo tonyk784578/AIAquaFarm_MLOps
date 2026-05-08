@@ -7,6 +7,7 @@ automatically when this package is imported during DB initialisation.
 from app.models.alert import Alert
 from app.models.feeding import FeedingRecord
 from app.models.fish_growth import FishGrowthRecord
+from app.models.user import User
 from app.models.water_quality import WaterQualityReading
 
-__all__ = ["Alert", "FeedingRecord", "FishGrowthRecord", "WaterQualityReading"]
+__all__ = ["Alert", "FeedingRecord", "FishGrowthRecord", "User", "WaterQualityReading"]

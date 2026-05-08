@@ -17,7 +17,6 @@ Target columns (N_OUTPUTS = 2):
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd

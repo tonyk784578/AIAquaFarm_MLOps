@@ -11,17 +11,21 @@ The engine is initialised once in the FastAPI lifespan and stored on
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pandas as pd
 import structlog
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from ai_modules.water_quality.feature_engineering import FeatureScaler, WindowBuilder, impute_window
-from ai_modules.water_quality.model import FEATURE_NAMES, SEQ_LEN, WaterQualityPredictionModel
+from ai_modules.water_quality.feature_engineering import (
+    FeatureScaler,
+    WindowBuilder,
+    impute_window,
+)
+from ai_modules.water_quality.model import (
+    FEATURE_NAMES,
+    SEQ_LEN,
+    WaterQualityPredictionModel,
+)
 from ai_modules.water_quality.predictor import WaterQualityPredictor
 from ai_modules.water_quality.schemas import (
     ForecastPoint,
@@ -29,6 +33,9 @@ from ai_modules.water_quality.schemas import (
     ModelStatusResponse,
     PredictResponse,
 )
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.config import get_settings
 from app.models.water_quality import WaterQualityReading
 
@@ -82,7 +89,7 @@ class WaterQualityInferenceEngine:
         model_name: str = "WaterQualityPredictor",
         stage: str = "Production",
         device: str = "cpu",
-    ) -> "WaterQualityInferenceEngine":
+    ) -> WaterQualityInferenceEngine:
         """Construct by loading from the MLflow registry.
 
         Args:
@@ -98,7 +105,9 @@ class WaterQualityInferenceEngine:
         engine = cls()
         engine._mlflow_uri = f"{tracking_uri} | models:/{model_name}/{stage}"
         try:
-            from ai_modules.water_quality.mlflow_loader import load_production_model_and_scaler
+            from ai_modules.water_quality.mlflow_loader import (
+                load_production_model_and_scaler,
+            )
 
             model, scaler = load_production_model_and_scaler(
                 tracking_uri=tracking_uri,
@@ -126,7 +135,9 @@ class WaterQualityInferenceEngine:
         return engine
 
     @classmethod
-    def from_checkpoint(cls, checkpoint_path: str, scaler_path: str, device: str = "cpu") -> "WaterQualityInferenceEngine":
+    def from_checkpoint(
+        cls, checkpoint_path: str, scaler_path: str, device: str = "cpu"
+    ) -> WaterQualityInferenceEngine:
         """Construct from local checkpoint files (useful for local dev / CI)."""
         engine = cls()
         engine._mlflow_uri = f"file://{checkpoint_path}"
@@ -206,7 +217,7 @@ class WaterQualityService:
         return self._builder.build_inference_window(df_imputed)
 
     async def predict_for_tank(
-        self, tank_id: str, mc_samples: Optional[int] = None
+        self, tank_id: str, mc_samples: int | None = None
     ) -> PredictResponse:
         """Fetch window + run inference for a tank.
 
@@ -218,7 +229,7 @@ class WaterQualityService:
             PredictResponse with point estimates, CI, and alert flags.
         """
         window = await self.fetch_feature_window(tank_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         prediction = await self.engine.predictor.predict_from_window(
             tank_id=tank_id,
             window=window,
@@ -244,7 +255,7 @@ class WaterQualityService:
         )
 
     async def predict_and_save(
-        self, tank_id: str, mc_samples: Optional[int] = None
+        self, tank_id: str, mc_samples: int | None = None
     ) -> PredictResponse:
         """Run inference and persist the result to water_quality_readings.
 
@@ -290,7 +301,7 @@ class WaterQualityService:
         window = await self.fetch_feature_window(tank_id)
         scaler = self.engine.scaler
         model = self.engine.model
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         horizon = 6
         points: list[ForecastPoint] = []
 

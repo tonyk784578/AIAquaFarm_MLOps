@@ -1,81 +1,306 @@
 """Optimization agent node functions.
 
-TODO (Phase 3): Implement each node with real AI module API calls and LLM.
+Pipeline:
+    gather_module_outputs → generate_candidates → simulate_in_twin → select_optimal
+
+gather_module_outputs  — fetch latest AI module results from backend endpoints
+generate_candidates    — Claude proposes ranked candidate control actions
+simulate_in_twin       — RASbit ODE simulator scores each candidate (6h forecast)
+select_optimal         — pick best scoring candidate; report if safe
 """
+
+from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import structlog
 
+from agents.config import get_agent_settings
 from agents.optimization_agent.state import OptimizationState
+from agents.optimization_agent.twin_sim import evaluate_candidates
 
 logger = structlog.get_logger()
+settings = get_agent_settings()
 
+
+def _svc_headers() -> dict[str, str]:
+    key = settings.backend_api_key
+    return {"X-Service-Key": key} if key else {}
+
+# ── Candidate generation prompt ────────────────────────────────────────────────
+
+_CANDIDATE_SYSTEM = """You are a RAS (Recirculating Aquaculture System) optimization AI.
+Given current AI module outputs, propose up to 5 candidate control actions.
+Each candidate must include: action, parameters, reasoning, and an initial_score (0.0-1.0).
+
+Available actions:
+  no_action       — maintain current regime
+  stop_feeding    — immediately halt feeder
+  reduce_feeding  — parameters: {reduction_factor: 0.0-1.0}
+  increase_aeration
+  water_exchange  — parameters: {exchange_pct: float}
+  create_alert    — parameters: {severity, category, title, message}
+
+Respond ONLY with valid JSON array of candidate objects. No markdown. No explanation outside JSON."""
+
+_CANDIDATE_TOOL = {
+    "name": "submit_candidates",
+    "description": "Submit ranked candidate control actions for digital twin evaluation.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "candidates": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string"},
+                        "parameters": {"type": "object"},
+                        "reasoning": {"type": "string"},
+                        "initial_score": {"type": "number"},
+                    },
+                    "required": ["action", "reasoning"],
+                },
+            }
+        },
+        "required": ["candidates"],
+    },
+}
+
+# ── Default candidate set (used as LLM fallback) ───────────────────────────────
+
+def _default_candidates(wq: dict[str, Any]) -> list[dict[str, Any]]:
+    """Generate rule-based candidate set when LLM is unavailable."""
+    from agents.optimization_agent.optimizer import RuleBasedOptimizer
+    result = RuleBasedOptimizer().evaluate(
+        water_quality=wq, growth={}, feeding={}
+    )
+    return [
+        {"action": result.action_type, "parameters": result.parameters,
+         "reasoning": f"[rule-based] {result.reasoning}", "initial_score": result.urgency},
+        {"action": "no_action", "parameters": {},
+         "reasoning": "Baseline — no intervention", "initial_score": 0.5},
+    ]
+
+
+# ── Nodes ──────────────────────────────────────────────────────────────────────
 
 async def gather_module_outputs(state: OptimizationState) -> dict[str, Any]:
-    """Collect outputs from all three AI modules.
+    """Fetch the latest outputs from all three AI module endpoints.
 
-    Args:
-        state: Current optimization state.
+    Calls:
+        GET  /api/v1/monitoring/water-quality/latest?tank_id=…
+        GET  /api/v1/growth/count/{tank_id}
+        GET  /api/v1/feeding/status
 
-    Returns:
-        State update with populated inputs field.
-
-    TODO (Phase 3): Call growth, feeding, and water quality AI modules.
+    Populates state['inputs'] with water_quality_prediction, growth_metrics,
+    feeding_activity, and tank_id.
     """
-    logger.info("gathering_ai_module_outputs")
-    # TODO (Phase 3): Fetch from AI module inference endpoints
-    return {"inputs": state.get("inputs", {})}
+    existing = state.get("inputs", {})
+    tank_id: str = existing.get("tank_id", "ALL")
+
+    logger.info("gathering_ai_module_outputs", tank_id=tank_id)
+
+    wq: dict[str, Any] = existing.get("water_quality_prediction", {})
+    growth: dict[str, Any] = existing.get("growth_metrics", {})
+    feeding: dict[str, Any] = existing.get("feeding_activity", {})
+
+    async with httpx.AsyncClient(timeout=10.0, headers=_svc_headers()) as client:
+        # Water quality
+        try:
+            resp = await client.get(
+                f"{settings.backend_url}/api/v1/monitoring/water-quality/latest",
+                params={"tank_id": tank_id, "limit": 1},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                wq = data[0] if isinstance(data, list) and data else data or wq
+        except Exception as exc:
+            logger.warning("wq_fetch_failed", error=str(exc))
+
+        # Growth count
+        try:
+            resp = await client.get(
+                f"{settings.backend_url}/api/v1/growth/count/{tank_id}"
+            )
+            if resp.status_code == 200:
+                growth = resp.json()
+        except Exception as exc:
+            logger.warning("growth_fetch_failed", error=str(exc))
+
+        # Feeding status
+        try:
+            resp = await client.get(
+                f"{settings.backend_url}/api/v1/feeding/status"
+            )
+            if resp.status_code == 200:
+                feeding = resp.json()
+        except Exception as exc:
+            logger.warning("feeding_fetch_failed", error=str(exc))
+
+    logger.info(
+        "module_outputs_gathered",
+        has_wq=bool(wq),
+        has_growth=bool(growth),
+        has_feeding=bool(feeding),
+    )
+    return {
+        "inputs": {
+            "tank_id": tank_id,
+            "water_quality_prediction": wq,
+            "growth_metrics": growth,
+            "feeding_activity": feeding,
+        }
+    }
 
 
 async def generate_candidates(state: OptimizationState) -> dict[str, Any]:
-    """Generate candidate control actions using LLM.
+    """Use Claude to propose ranked candidate control actions.
 
-    Args:
-        state: Current optimization state.
-
-    Returns:
-        State update with recommended_actions list.
-
-    TODO (Phase 3): Implement multi-action candidate generation with Claude.
+    Falls back to the rule-based optimizer if the Anthropic API is unavailable.
+    Returns up to 5 candidates for digital twin evaluation.
     """
-    logger.info("generating_control_candidates")
-    # TODO (Phase 3): Call Claude with RAS-domain system prompt
-    candidates = [
-        {"action": "no_action", "reasoning": "Stub — implement in Phase 3", "score": 0.0}
-    ]
-    return {"recommended_actions": candidates}
+    if state.get("error"):
+        return {"recommended_actions": []}
+
+    inputs = state.get("inputs", {})
+    wq = inputs.get("water_quality_prediction", {})
+    growth = inputs.get("growth_metrics", {})
+    feeding = inputs.get("feeding_activity", {})
+    tank_id = inputs.get("tank_id", "ALL")
+
+    user_message = (
+        f"Tank: {tank_id}\n\n"
+        "Water Quality (AI virtual sensor):\n"
+        f"  ammonia_ppm      = {wq.get('ammonia_ppm', 'N/A')}\n"
+        f"  nitrite_ppm      = {wq.get('nitrite_ppm', 'N/A')}\n"
+        f"  dissolved_oxygen = {wq.get('dissolved_oxygen_mgl', 'N/A')} mg/L\n"
+        f"  temperature_c    = {wq.get('temperature_c', 'N/A')}\n"
+        f"  ph               = {wq.get('ph', 'N/A')}\n\n"
+        "Growth Metrics:\n"
+        f"  fish_count  = {growth.get('fish_count', 'N/A')}\n"
+        f"  biomass_kg  = {growth.get('biomass_kg', 'N/A')}\n\n"
+        "Feeding Activity:\n"
+        f"  activity_score = {feeding.get('activity_score', 'N/A')}\n"
+        f"  satiation      = {feeding.get('satiation_detected', 'N/A')}\n\n"
+        "Propose up to 5 candidate control actions. Use the submit_candidates tool."
+    )
+
+    try:
+        import anthropic
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        response = await client.messages.create(
+            model=settings.llm_model,
+            max_tokens=2048,
+            temperature=0.2,
+            system=_CANDIDATE_SYSTEM,
+            tools=[_CANDIDATE_TOOL],
+            messages=[{"role": "user", "content": user_message}],
+        )
+
+        candidates: list[dict[str, Any]] = []
+        for block in response.content:
+            if block.type == "tool_use" and block.name == "submit_candidates":
+                candidates = block.input.get("candidates", [])
+                break
+
+        if not candidates:
+            candidates = _default_candidates(wq)
+
+        logger.info(
+            "candidates_generated",
+            model=settings.llm_model,
+            count=len(candidates),
+            actions=[c.get("action") for c in candidates],
+        )
+        return {"recommended_actions": candidates}
+
+    except Exception as exc:
+        logger.warning("llm_candidate_generation_failed", error=str(exc))
+        return {"recommended_actions": _default_candidates(wq)}
 
 
 async def simulate_in_twin(state: OptimizationState) -> dict[str, Any]:
-    """Simulate each candidate action in the RASbit digital twin.
+    """Run each candidate through the RASbit digital twin ODE simulator.
 
-    Args:
-        state: Current optimization state with candidate actions.
-
-    Returns:
-        State update with simulation_result.
-
-    TODO (Phase 3): POST to RASbit digital twin API with candidate actions.
-    TODO (Phase 3): Parse simulation outcomes (water quality forecast, fish stress index).
+    Evaluates a 6-hour forecast for each candidate and enriches each with
+    'simulation' and 'score' fields. The candidates list is returned sorted
+    best → worst by score.
     """
-    logger.info("simulating_in_digital_twin")
-    # TODO (Phase 3): Connect to RASbit simulation API
-    return {"simulation_result": {"status": "stub", "forecast": {}}}
+    candidates = state.get("recommended_actions", [])
+    if not candidates:
+        return {"simulation_result": {"status": "no_candidates"}}
+
+    inputs = state.get("inputs", {})
+    current_state = inputs.get("water_quality_prediction", {})
+
+    logger.info("running_digital_twin_simulation", candidates=len(candidates))
+
+    ranked = evaluate_candidates(
+        candidates=candidates,
+        current_state=current_state,
+        horizon_hours=6,
+    )
+
+    logger.info(
+        "simulation_complete",
+        best_action=ranked[0].get("action") if ranked else "none",
+        best_score=ranked[0].get("score") if ranked else 0.0,
+    )
+
+    return {
+        "recommended_actions": ranked,
+        "simulation_result": {
+            "status": "ok",
+            "candidates_evaluated": len(ranked),
+            "best_action": ranked[0].get("action") if ranked else "none",
+            "best_score": ranked[0].get("score") if ranked else 0.0,
+        },
+    }
 
 
 async def select_optimal(state: OptimizationState) -> dict[str, Any]:
-    """Select the optimal action based on simulation results.
+    """Select the highest-scoring candidate from the simulation results.
 
-    Args:
-        state: Current optimization state with simulation results.
-
-    Returns:
-        State update with selected_action.
-
-    TODO (Phase 3): Score actions by simulated water quality outcomes.
+    Applies a minimum score threshold (0.3) — if no candidate exceeds it,
+    defaults to a create_alert action to notify the operator.
     """
     candidates = state.get("recommended_actions", [])
-    selected = candidates[0] if candidates else None
-    logger.info("optimal_action_selected", action=selected)
+
+    MIN_SAFE_SCORE = 0.3
+
+    if not candidates:
+        selected = {
+            "action": "no_action",
+            "parameters": {},
+            "reasoning": "No candidates generated",
+            "score": 0.0,
+        }
+    else:
+        best = candidates[0]  # already sorted best→worst by simulate_in_twin
+        if best.get("score", 0.0) < MIN_SAFE_SCORE:
+            selected = {
+                "action": "create_alert",
+                "parameters": {
+                    "severity": "critical",
+                    "category": "water_quality",
+                    "title": "All control options predict poor water quality",
+                    "message": (
+                        f"Best candidate '{best.get('action')}' scored only "
+                        f"{best.get('score', 0):.2f}. Manual intervention required."
+                    ),
+                },
+                "reasoning": "Score below safety threshold — alerting operator",
+                "score": best.get("score", 0.0),
+            }
+        else:
+            selected = best
+
+    logger.info(
+        "optimal_action_selected",
+        action=selected.get("action"),
+        score=selected.get("score"),
+        reasoning=selected.get("reasoning", "")[:80],
+    )
     return {"selected_action": selected}

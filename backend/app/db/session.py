@@ -7,8 +7,8 @@ TimescaleDB hypertables are created in infra/postgres/init.sql at DB boot.
 from collections.abc import AsyncGenerator
 from typing import Any
 
+import sqlalchemy as sa
 import structlog
-from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -73,17 +73,12 @@ async def get_db() -> AsyncGenerator[AsyncSession, Any]:
 
 
 async def init_db() -> None:
-    """Create all tables defined by ORM models.
+    """Verify database connectivity at startup.
 
-    Called once at application startup (see main.py lifespan).
-    TimescaleDB hypertables and extensions are handled separately
-    in infra/postgres/init.sql which runs at container first-start.
-
-    TODO (Phase 1): Replace with `alembic upgrade head` in production.
+    Schema is managed exclusively by Alembic (`alembic upgrade head`).
+    TimescaleDB hypertables and extensions are handled separately in
+    infra/postgres/init.sql which runs at container first-start.
     """
-    # Import models here to ensure they are registered on Base.metadata
-    from app.models import alert, feeding, fish_growth, water_quality  # noqa: F401
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        logger.info("database_tables_created_or_verified")
+    async with engine.connect() as conn:
+        await conn.execute(sa.text("SELECT 1"))
+    logger.info("database_connection_verified")

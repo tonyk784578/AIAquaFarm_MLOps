@@ -4,13 +4,15 @@ version: "3.9"
 services:
   backend:
     build:
-      context: ./backend
+      context: .                      # project root — ai_modules/ is accessible
+      dockerfile: backend/Dockerfile
       target: development
     environment:
       DEBUG: "true"
       LOG_LEVEL: debug
     volumes:
-      - ./backend:/app
+      - ./backend:/app               # hot-reload Python source
+      - ./ai_modules:/app/ai_modules # keep ai_modules editable
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   agents:

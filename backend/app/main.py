@@ -5,16 +5,20 @@ and exposes the health-check endpoint used by Docker orchestration.
 """
 
 import logging
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.router import api_router
 from app.config import get_settings
+from app.core.limiter import limiter
 from app.db.session import init_db
 
 structlog.configure(
@@ -49,7 +53,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
     logger.info("database_initialized")
 
-    # Load water quality inference engine (best-effort; degraded mode if MLflow unreachable)
+    # ── Redis connection ─────────────────────────────────────────────────────
+    from app.db.redis import close_redis, init_redis
+    try:
+        await init_redis(settings.redis_url)
+    except Exception as exc:
+        logger.warning("redis_init_failed", error=str(exc), msg="Control commands will fail")
+
+    # ── Water quality inference engine ──────────────────────────────────────
     from app.services.water_quality_service import WaterQualityInferenceEngine
 
     if settings.wq_checkpoint_path:
@@ -66,7 +77,62 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             device=settings.wq_model_device,
         )
 
+    # ── Growth inference engine ──────────────────────────────────────────────
+    from app.services.growth_service import GrowthInferenceEngine
+
+    if settings.growth_checkpoint_path:
+        app.state.growth_engine = GrowthInferenceEngine.from_checkpoint(
+            settings.growth_checkpoint_path,
+        )
+    else:
+        app.state.growth_engine = GrowthInferenceEngine.from_mlflow(
+            tracking_uri=settings.mlflow_tracking_uri,
+            model_name=settings.growth_model_name,
+            stage=settings.growth_model_stage,
+        )
+
+    # ── Feeding inference engine ─────────────────────────────────────────────
+    from app.services.feeding_service import FeedingInferenceEngine
+
+    if settings.feeding_checkpoint_path:
+        app.state.feeding_engine = FeedingInferenceEngine.from_checkpoint(
+            settings.feeding_checkpoint_path,
+        )
+    else:
+        app.state.feeding_engine = FeedingInferenceEngine.from_mlflow(
+            tracking_uri=settings.mlflow_tracking_uri,
+            model_name=settings.feeding_model_name,
+            stage=settings.feeding_model_stage,
+        )
+
+    # ── Sensor publisher (virtual sensor → Redis + PostgreSQL) ────────────────
+    from app.db.redis import get_redis_client
+    from app.db.session import AsyncSessionLocal
+    from app.services.sensor_publisher import SensorPublisher
+
+    try:
+        redis_client = get_redis_client()
+        tank_ids = settings.default_tank_ids
+        publisher = SensorPublisher(
+            tank_ids=tank_ids,
+            poll_interval=settings.sensor_poll_interval,
+            redis=redis_client,
+            session_factory=AsyncSessionLocal,
+            # Write to DB every 6 ticks (≈ 30 s at 5 s interval)
+            db_write_every=max(1, 30 // max(1, settings.sensor_poll_interval)),
+        )
+        publisher.start()
+        app.state.sensor_publisher = publisher
+        logger.info("sensor_publisher_started", tanks=tank_ids)
+    except Exception as exc:
+        logger.warning("sensor_publisher_init_failed", error=str(exc))
+        app.state.sensor_publisher = None
+
     yield
+
+    if getattr(app.state, "sensor_publisher", None):
+        await app.state.sensor_publisher.stop()
+    await close_redis()
     logger.info("shutting_down_aquafarm_backend")
 
 
@@ -89,6 +155,10 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
+
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
     app.add_middleware(
         CORSMiddleware,

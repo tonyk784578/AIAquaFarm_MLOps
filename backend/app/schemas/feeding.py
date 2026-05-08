@@ -1,7 +1,7 @@
 """Pydantic schemas for feeding records and control commands."""
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -10,7 +10,7 @@ class FeedingBase(BaseModel):
     """Shared fields for feeding records."""
 
     tank_id: str = Field(..., max_length=50)
-    commanded_amount_kg: Optional[float] = Field(None, ge=0.0, le=100.0)
+    commanded_amount_kg: float | None = Field(None, ge=0.0, le=100.0)
 
 
 class FeedingCreate(FeedingBase):
@@ -18,9 +18,9 @@ class FeedingCreate(FeedingBase):
 
     started_at: datetime
     trigger_source: Literal["ai", "manual", "schedule"] = "ai"
-    recommended_amount_kg: Optional[float] = Field(None, ge=0.0)
-    activity_score: Optional[float] = Field(None, ge=0.0, le=1.0)
-    model_version: Optional[str] = None
+    recommended_amount_kg: float | None = Field(None, ge=0.0)
+    activity_score: float | None = Field(None, ge=0.0, le=1.0)
+    model_version: str | None = None
 
 
 class FeedingRead(FeedingBase):
@@ -28,12 +28,12 @@ class FeedingRead(FeedingBase):
 
     id: int
     started_at: datetime
-    ended_at: Optional[datetime] = None
-    actual_amount_kg: Optional[float] = None
-    duration_seconds: Optional[int] = None
-    activity_score: Optional[float] = None
-    recommended_amount_kg: Optional[float] = None
-    feed_waste_estimate_pct: Optional[float] = None
+    ended_at: datetime | None = None
+    actual_amount_kg: float | None = None
+    duration_seconds: int | None = None
+    activity_score: float | None = None
+    recommended_amount_kg: float | None = None
+    feed_waste_estimate_pct: float | None = None
     trigger_source: str
     is_completed: bool
     is_emergency_stopped: bool
@@ -49,4 +49,4 @@ class FeedingCommand(BaseModel):
     duration_seconds: int = Field(
         default=60, ge=5, le=600, description="Maximum feeding duration in seconds"
     )
-    notes: Optional[str] = Field(None, max_length=500)
+    notes: str | None = Field(None, max_length=500)

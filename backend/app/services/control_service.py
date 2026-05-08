@@ -1,86 +1,155 @@
-"""Control service — dispatches equipment commands to edge devices.
+"""Control service — dispatches equipment commands to edge devices via Redis pub/sub.
 
-Commands are published to Redis pub/sub channels. Edge device processes
+Commands are published as JSON to Redis channels. Edge device processes
 subscribe and actuate the physical equipment.
 
 Channel naming convention: `cmd:{tank_id}:{device_type}`
-  e.g. cmd:T001:feeder, cmd:T002:pump
-
-TODO (Phase 3): Connect to real Redis client (currently stubbed).
-TODO (Phase 3): Add command deduplication and idempotency keys.
-TODO (Phase 4): Implement command audit log with outcome tracking.
+  cmd:T001:feeder    — feeder on/off, amount_kg
+  cmd:T001:pump      — circulation pump
+  cmd:T001:aeration  — aeration blower
+  cmd:T001:exchange  — water exchange valve
 """
 
+from __future__ import annotations
+
+import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 import structlog
-from fastapi import HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.schemas.feeding import FeedingCommand
 
 logger = structlog.get_logger()
 
 
+def _job_id() -> str:
+    return str(uuid.uuid4())
+
+
+def _now_iso() -> str:
+    return datetime.now(tz=UTC).isoformat()
+
+
+def _command_payload(job_id: str, action: str, **kwargs: Any) -> str:
+    """Serialise a command to JSON for Redis publish."""
+    return json.dumps(
+        {
+            "job_id": job_id,
+            "action": action,
+            "dispatched_at": _now_iso(),
+            **kwargs,
+        }
+    )
+
+
 class ControlService:
-    """Handles equipment control commands and dispatches them via Redis."""
+    """Handles equipment control commands dispatched via Redis pub/sub.
 
-    def __init__(self, db: AsyncSession) -> None:
-        self.db = db
-        # TODO (Phase 3): Inject Redis client via dependency injection
-        # self.redis = redis_client
+    All methods publish to the appropriate Redis channel and return an
+    acknowledgement dict. The edge device is responsible for actually
+    actuating the equipment and optionally publishing a completion event.
 
-    async def trigger_feeding(self, command: FeedingCommand) -> dict:
+    Args:
+        redis: Async Redis client (injected from app.db.redis).
+    """
+
+    def __init__(self, redis: Any) -> None:
+        self._redis = redis
+
+    async def _publish(self, channel: str, payload: str) -> None:
+        """Publish payload to a Redis channel, logging the result."""
+        try:
+            receivers = await self._redis.publish(channel, payload)
+            logger.info(
+                "command_published",
+                channel=channel,
+                receivers=receivers,
+            )
+        except Exception as exc:
+            logger.error("redis_publish_failed", channel=channel, error=str(exc))
+            raise
+
+    async def trigger_feeding(self, tank_id: str, amount_kg: float, duration_s: int = 0) -> dict:
         """Dispatch a feeding command to the edge feeder device.
 
         Args:
-            command: Feeding command payload.
+            tank_id: Target tank identifier.
+            amount_kg: Feed amount in kilograms.
+            duration_s: Feeder run duration in seconds (0 = auto from amount).
 
         Returns:
-            Job acknowledgement dict with job_id and status.
-
-        TODO (Phase 3): Publish to Redis `cmd:{tank_id}:feeder`.
-        TODO (Phase 3): Persist command to feeding_records table.
+            Job acknowledgement dict.
         """
-        job_id = str(uuid.uuid4())
-        logger.info(
-            "feeding_command_dispatched",
-            job_id=job_id,
-            tank_id=command.tank_id,
-            amount_kg=command.amount_kg,
+        job_id = _job_id()
+        channel = f"cmd:{tank_id}:feeder"
+        payload = _command_payload(
+            job_id, "feed",
+            tank_id=tank_id,
+            amount_kg=amount_kg,
+            duration_s=duration_s,
         )
-        # TODO (Phase 3): await self.redis.publish(f"cmd:{command.tank_id}:feeder", payload)
+        await self._publish(channel, payload)
+        logger.info("feeding_command_dispatched", job_id=job_id, tank_id=tank_id, kg=amount_kg)
         return {
             "job_id": job_id,
             "status": "accepted",
-            "tank_id": command.tank_id,
-            "amount_kg": command.amount_kg,
-            "dispatched_at": datetime.now(tz=timezone.utc).isoformat(),
+            "tank_id": tank_id,
+            "amount_kg": amount_kg,
+            "channel": channel,
+            "dispatched_at": _now_iso(),
         }
 
     async def stop_feeding(self, tank_id: str) -> dict:
-        """Send emergency stop to the feeder device in the given tank.
+        """Send emergency stop to the feeder device.
 
         Args:
             tank_id: Target tank identifier.
 
         Returns:
             Stop command acknowledgement.
-
-        TODO (Phase 3): Publish STOP to Redis `cmd:{tank_id}:feeder`.
         """
-        job_id = str(uuid.uuid4())
+        job_id = _job_id()
+        channel = f"cmd:{tank_id}:feeder"
+        payload = _command_payload(job_id, "stop", tank_id=tank_id)
+        await self._publish(channel, payload)
         logger.warning("feeding_emergency_stop", job_id=job_id, tank_id=tank_id)
         return {
             "job_id": job_id,
             "status": "stop_accepted",
             "tank_id": tank_id,
-            "dispatched_at": datetime.now(tz=timezone.utc).isoformat(),
+            "channel": channel,
+            "dispatched_at": _now_iso(),
+        }
+
+    async def adjust_feeding(self, tank_id: str, reduction_factor: float) -> dict:
+        """Adjust the next feeding amount by a factor.
+
+        Args:
+            tank_id: Target tank identifier.
+            reduction_factor: Multiplier in [0, 1] applied to baseline feed amount.
+
+        Returns:
+            Adjustment command acknowledgement.
+        """
+        job_id = _job_id()
+        channel = f"cmd:{tank_id}:feeder"
+        payload = _command_payload(
+            job_id, "adjust",
+            tank_id=tank_id,
+            reduction_factor=reduction_factor,
+        )
+        await self._publish(channel, payload)
+        return {
+            "job_id": job_id,
+            "status": "accepted",
+            "tank_id": tank_id,
+            "reduction_factor": reduction_factor,
+            "channel": channel,
+            "dispatched_at": _now_iso(),
         }
 
     async def control_pump(self, tank_id: str, action: str) -> dict:
-        """Start or stop the circulation pump for a tank.
+        """Start or stop the circulation pump.
 
         Args:
             tank_id: Target tank identifier.
@@ -88,15 +157,72 @@ class ControlService:
 
         Returns:
             Command acknowledgement.
-
-        TODO (Phase 3): Publish pump command to Redis `cmd:{tank_id}:pump`.
         """
-        job_id = str(uuid.uuid4())
-        logger.info("pump_command", job_id=job_id, tank_id=tank_id, action=action)
+        job_id = _job_id()
+        channel = f"cmd:{tank_id}:pump"
+        payload = _command_payload(job_id, action, tank_id=tank_id)
+        await self._publish(channel, payload)
         return {
             "job_id": job_id,
             "status": "accepted",
             "tank_id": tank_id,
             "action": action,
-            "dispatched_at": datetime.now(tz=timezone.utc).isoformat(),
+            "channel": channel,
+            "dispatched_at": _now_iso(),
+        }
+
+    async def increase_aeration(self, tank_id: str, boost_pct: float = 30.0) -> dict:
+        """Boost aeration blower speed.
+
+        Args:
+            tank_id: Target tank identifier.
+            boost_pct: Percentage increase above current speed (default 30%).
+
+        Returns:
+            Command acknowledgement.
+        """
+        job_id = _job_id()
+        channel = f"cmd:{tank_id}:aeration"
+        payload = _command_payload(
+            job_id, "boost",
+            tank_id=tank_id,
+            boost_pct=boost_pct,
+        )
+        await self._publish(channel, payload)
+        logger.info("aeration_boost_dispatched", tank_id=tank_id, boost_pct=boost_pct)
+        return {
+            "job_id": job_id,
+            "status": "accepted",
+            "tank_id": tank_id,
+            "boost_pct": boost_pct,
+            "channel": channel,
+            "dispatched_at": _now_iso(),
+        }
+
+    async def trigger_water_exchange(self, tank_id: str, exchange_pct: float = 10.0) -> dict:
+        """Trigger a partial water exchange.
+
+        Args:
+            tank_id: Target tank identifier.
+            exchange_pct: Percentage of tank volume to exchange (default 10%).
+
+        Returns:
+            Command acknowledgement.
+        """
+        job_id = _job_id()
+        channel = f"cmd:{tank_id}:exchange"
+        payload = _command_payload(
+            job_id, "exchange",
+            tank_id=tank_id,
+            exchange_pct=exchange_pct,
+        )
+        await self._publish(channel, payload)
+        logger.info("water_exchange_dispatched", tank_id=tank_id, exchange_pct=exchange_pct)
+        return {
+            "job_id": job_id,
+            "status": "accepted",
+            "tank_id": tank_id,
+            "exchange_pct": exchange_pct,
+            "channel": channel,
+            "dispatched_at": _now_iso(),
         }

@@ -82,10 +82,98 @@ export interface Tank {
   status: 'online' | 'offline' | 'warning'
 }
 
-// TODO (Phase 2): Add WebSocket message types for real-time updates
 export interface WSMessage<T = unknown> {
-  type: 'water_quality' | 'fish_growth' | 'feeding' | 'alert' | 'control'
+  type: 'water_quality' | 'fish_growth' | 'feeding' | 'alert' | 'control' | 'ping'
   tank_id: string
   timestamp: string
   data: T
+}
+
+// ── Auth ───────────────────────────────────────────────────────────────────────
+
+export interface UserProfile {
+  id: number
+  username: string
+  email: string
+  full_name: string
+  is_active: boolean
+  is_superuser: boolean
+}
+
+export interface TokenResponse {
+  access_token: string
+  refresh_token: string
+  token_type: string
+}
+
+// ── AI Model status ────────────────────────────────────────────────────────────
+
+export interface ModelStatus {
+  model_name: string
+  is_loaded: boolean
+  model_version: string
+  device: string
+}
+
+export interface FarmSettings {
+  ammonia_threshold_ppm: number
+  nitrite_threshold_ppm: number
+  dissolved_oxygen_min_mgl: number
+  ph_min: number
+  ph_max: number
+  temperature_min_c: number
+  temperature_max_c: number
+  sensor_poll_interval: number
+}
+
+// ── Agent service types ────────────────────────────────────────────────────────
+
+export interface ControlDecision {
+  action_type: string
+  tank_id: string
+  parameters: Record<string, unknown>
+  reasoning: string
+  confidence: number
+}
+
+export interface ExecutedCommand {
+  decision: ControlDecision
+  status: 'ok' | 'error'
+  error?: string
+}
+
+export interface AgentCycleStatus {
+  status?: string
+  ran_at: string
+  final_report: string
+  decisions: ControlDecision[]
+  executed: ExecutedCommand[]
+  error: string | null
+}
+
+export interface SimulationResult {
+  status: string
+  candidates_evaluated: number
+  best_action: string
+  best_score: number
+}
+
+export interface OptimizationStatus {
+  status?: string
+  ran_at: string
+  tank_id: string
+  selected_action: {
+    action: string
+    parameters: Record<string, unknown>
+    reasoning: string
+    score: number
+  } | null
+  simulation_result: SimulationResult | null
+  candidates: number
+}
+
+export interface AgentHealth {
+  status: string
+  service: string
+  management_graph: boolean
 }

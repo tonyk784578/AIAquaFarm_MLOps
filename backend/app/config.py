@@ -6,7 +6,6 @@ No hard-coded secrets or connection strings anywhere in the codebase.
 
 import json
 from functools import lru_cache
-from typing import List
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -35,7 +34,6 @@ class Settings(BaseSettings):
         default="dev_secret_change_me",
         description="JWT signing secret — override in production",
     )
-    access_token_expire_minutes: int = 60 * 24  # 24 hours
 
     # ── Database (PostgreSQL + TimescaleDB) ────────────────────
     database_url: str = Field(
@@ -57,14 +55,14 @@ class Settings(BaseSettings):
     mlflow_tracking_uri: str = "http://localhost:5000"
 
     # ── CORS ───────────────────────────────────────────────────
-    cors_origins: List[str] = Field(
+    cors_origins: list[str] = Field(
         default=["http://localhost:3000", "http://localhost"],
         description="Allowed CORS origins",
     )
 
     @field_validator("cors_origins", mode="before")
     @classmethod
-    def parse_cors_origins(cls, v: str | List[str]) -> List[str]:
+    def parse_cors_origins(cls, v: str | list[str]) -> list[str]:
         """Accept CORS origins as JSON string or Python list."""
         if isinstance(v, str):
             return json.loads(v)
@@ -113,6 +111,67 @@ class Settings(BaseSettings):
     )
     wq_checkpoint_path: str = ""
     wq_scaler_path: str = ""
+
+    # ── Growth Model (inference) ───────────────────────────────────────────
+    growth_model_name: str = Field(default="FishDetection", description="MLflow model name")
+    growth_model_stage: str = Field(default="Production", description="MLflow model stage")
+    growth_checkpoint_path: str = ""
+
+    # ── Feeding Model (inference) ──────────────────────────────────────────
+    feeding_model_name: str = Field(
+        default="FeedingActivityClassifier", description="MLflow model name"
+    )
+    feeding_model_stage: str = Field(default="Production", description="MLflow model stage")
+    feeding_checkpoint_path: str = ""
+
+    # ── Sensor publisher ───────────────────────────────────────────────────────
+    default_tank_ids: list[str] = Field(
+        default=["TANK-01", "TANK-02", "TANK-03"],
+        description="Tank IDs for the background virtual sensor publisher",
+    )
+
+    @field_validator("default_tank_ids", mode="before")
+    @classmethod
+    def parse_tank_ids(cls, v: str | list[str]) -> list[str]:
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
+
+    # ── JWT Authentication ─────────────────────────────────────────────────────
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = Field(
+        default=60 * 24,
+        description="Access token lifetime in minutes (default 24 h)",
+    )
+    jwt_refresh_token_expire_days: int = Field(
+        default=7,
+        description="Refresh token lifetime in days",
+    )
+    jwt_refresh_secret_key: str = Field(
+        default="",
+        description="Separate HMAC secret for refresh tokens. Falls back to secret_key if empty.",
+    )
+    registration_open: bool = Field(
+        default=False,
+        description="Allow open self-registration. Enable only for initial setup.",
+    )
+    internal_api_key: str = Field(
+        default="",
+        description=(
+            "Shared secret for internal service-to-service calls (agents → backend). "
+            "Passed as the X-Service-Key header. Must be set in production."
+        ),
+    )
+
+    # ── Cookie settings ────────────────────────────────────────────────────────
+    cookie_secure: bool = Field(
+        default=False,
+        description="Set Secure flag on auth cookies (requires HTTPS). Enable in production.",
+    )
+    cookie_samesite: str = Field(
+        default="lax",
+        description="SameSite attribute for auth cookies: lax, strict, or none.",
+    )
 
     # ── Storage (Data Lake) ────────────────────────────────────────────────
     s3_endpoint_url: str = ""

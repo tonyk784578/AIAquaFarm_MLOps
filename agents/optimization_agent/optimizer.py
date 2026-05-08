@@ -72,7 +72,6 @@ class RuleBasedOptimizer:
         TODO (Phase 3): Add per-tank rule profiles loaded from DB.
         """
         ammonia = water_quality.get("ammonia_ppm", 0.0) or 0.0
-        nitrite = water_quality.get("nitrite_ppm", 0.0) or 0.0
         do_level = water_quality.get("dissolved_oxygen_mgl", 8.0) or 8.0
 
         # Critical: high ammonia — stop feeding immediately

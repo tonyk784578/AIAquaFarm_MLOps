@@ -3,9 +3,6 @@
 The AgentState TypedDict is the shared memory that flows through
 every node in the management agent graph. All nodes read from and
 write to this state object.
-
-TODO (Phase 3): Add message history for multi-turn reasoning.
-TODO (Phase 3): Add digital twin simulation result field.
 """
 
 from typing import Any, Optional, TypedDict
@@ -40,6 +37,12 @@ class AgentState(TypedDict, total=False):
         error:              Error message if any node fails.
         iteration_count:    Guard against infinite loops.
         final_report:       Human-readable summary for the dashboard.
+        message_history:    Accumulated LLM messages for multi-turn reasoning.
+                            Each entry is a dict with 'role' and 'content' keys
+                            matching the Anthropic Messages API format.
+        twin_result:        Output from the digital twin simulation used by the
+                            optimization subgraph. Contains per-candidate scores
+                            and the selected best action.
     """
 
     farm_snapshot: FarmSnapshot
@@ -48,3 +51,5 @@ class AgentState(TypedDict, total=False):
     error: Optional[str]
     iteration_count: int
     final_report: str
+    message_history: list[dict[str, Any]]
+    twin_result: Optional[dict[str, Any]]

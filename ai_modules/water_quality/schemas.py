@@ -109,6 +109,7 @@ class ForecastResponse(BaseModel):
 class ModelStatusResponse(BaseModel):
     """Response from GET /api/v1/water-quality/model-status."""
 
+    model_name: str = "WaterQualityPredictor"
     is_loaded: bool
     model_version: str
     architecture: str

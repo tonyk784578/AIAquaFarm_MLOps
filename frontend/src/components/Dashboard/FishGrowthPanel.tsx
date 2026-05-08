@@ -1,15 +1,40 @@
-// Fish growth monitoring panel — displays vision AI outputs.
-// TODO (Phase 2): Add growth trend chart (weight/length over time).
-// TODO (Phase 2): Add camera feed thumbnail from edge device.
-
+import { useQuery } from '@tanstack/react-query'
 import { Fish } from 'lucide-react'
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+} from 'recharts'
+import { getLatestFishGrowth } from '@/services/api'
 import type { FishGrowthRecord } from '@/types'
 
 interface Props {
   data: FishGrowthRecord | null
+  tankId?: string
 }
 
-export default function FishGrowthPanel({ data }: Props) {
+function fmt(iso: string) {
+  const d = new Date(iso)
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+export default function FishGrowthPanel({ data, tankId }: Props) {
+  const { data: history = [] } = useQuery<FishGrowthRecord[]>({
+    queryKey: ['fish-growth-mini', tankId],
+    queryFn: () => getLatestFishGrowth(tankId, 14),
+    enabled: !!tankId,
+    refetchInterval: 60_000,
+    select: (rows) => [...rows].reverse(),
+  })
+
+  const chartData = history.map((r) => ({
+    date: fmt(r.measured_at),
+    체중: r.avg_weight_g != null ? +r.avg_weight_g.toFixed(0) : null,
+  }))
+
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-4">
@@ -68,9 +93,43 @@ export default function FishGrowthPanel({ data }: Props) {
         <p className="text-slate-500 text-sm">데이터 없음</p>
       )}
 
-      {/* TODO (Phase 2): Camera thumbnail */}
-      <div className="mt-4 h-24 bg-slate-700/50 rounded-lg flex items-center justify-center">
-        <span className="text-slate-500 text-xs">카메라 피드 — Phase 2 구현 예정</span>
+      {/* Mini weight trend chart */}
+      <div className="mt-4">
+        {chartData.length > 1 ? (
+          <ResponsiveContainer width="100%" height={80}>
+            <LineChart data={chartData} margin={{ top: 2, right: 4, left: -28, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+              <XAxis
+                dataKey="date"
+                tick={{ fill: '#64748b', fontSize: 10 }}
+                tickLine={false}
+                axisLine={false}
+                interval="preserveStartEnd"
+              />
+              <Tooltip
+                contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 11 }}
+                labelStyle={{ color: '#94a3b8' }}
+              />
+              <Line
+                type="monotone"
+                dataKey="체중"
+                stroke="#34d399"
+                dot={false}
+                strokeWidth={2}
+                connectNulls
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="h-20 bg-slate-700/50 rounded-lg flex items-center justify-center">
+            <span className="text-slate-500 text-xs">
+              {tankId ? '체중 추세 데이터 로딩 중…' : '수조를 선택하세요'}
+            </span>
+          </div>
+        )}
+        {chartData.length > 1 && (
+          <p className="text-xs text-slate-600 mt-1 text-right">평균 체중 추세 (최근 14회)</p>
+        )}
       </div>
     </div>
   )

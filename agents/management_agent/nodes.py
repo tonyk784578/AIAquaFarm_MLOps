@@ -23,6 +23,11 @@ from agents.management_agent.state import AgentState, FarmSnapshot
 logger = structlog.get_logger()
 settings = get_agent_settings()
 
+
+def _svc_headers() -> dict[str, str]:
+    key = settings.backend_api_key
+    return {"X-Service-Key": key} if key else {}
+
 # ── System prompt ──────────────────────────────────────────────────────────────
 
 _SYSTEM_PROMPT = """You are an expert RAS (Recirculating Aquaculture System) farm management AI.
@@ -106,7 +111,7 @@ async def collect_farm_data(state: AgentState) -> dict[str, Any]:
     """
     logger.info("collecting_farm_data")
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, headers=_svc_headers()) as client:
             resp = await client.get(f"{settings.backend_url}/api/v1/dashboard/summary")
             resp.raise_for_status()
             data = resp.json()
@@ -128,9 +133,12 @@ async def collect_farm_data(state: AgentState) -> dict[str, Any]:
 
 
 async def analyse_situation(state: AgentState) -> dict[str, Any]:
-    """Use Claude claude-sonnet-4-6 with tool use to analyse the farm snapshot.
+    """Analyse the farm snapshot via optimization subgraph + Claude tool use.
 
-    Falls back to the rule-based optimizer if the Anthropic API is unavailable.
+    1. Runs the optimization agent subgraph (gather → candidates → twin sim → select).
+    2. If a non-trivial action is recommended, passes it to Claude for final
+       validation and supplementary decisions (e.g. additional alerts).
+    3. Falls back to the rule-based optimizer if both LLM and subgraph fail.
 
     Args:
         state: Current agent state including farm_snapshot.
@@ -146,6 +154,37 @@ async def analyse_situation(state: AgentState) -> dict[str, Any]:
     wq = snapshot.get("water_quality", {})
     growth = snapshot.get("fish_growth", {})
     alerts = snapshot.get("active_alerts", [])
+
+    # ── Step 1: Run optimization subgraph ─────────────────────────────────────
+    opt_decision: dict[str, Any] = {}
+    twin_result: dict[str, Any] | None = None
+    try:
+        from agents.optimization_agent.graph import optimization_graph
+        if optimization_graph is not None:
+            tank_id = wq.get("tank_id", "ALL")
+            opt_state = {
+                "inputs": {
+                    "tank_id": tank_id,
+                    "water_quality_prediction": wq,
+                    "growth_metrics": growth,
+                    "feeding_activity": snapshot.get("feeding", {}),
+                }
+            }
+            opt_result = await optimization_graph.ainvoke(opt_state)
+            opt_decision = opt_result.get("selected_action") or {}
+            # Persist full twin simulation results for observability
+            twin_result = {
+                "selected_action": opt_decision,
+                "candidates": opt_result.get("candidates", []),
+                "simulation_scores": opt_result.get("simulation_scores", []),
+            }
+            logger.info(
+                "optimization_subgraph_result",
+                action=opt_decision.get("action"),
+                score=opt_decision.get("score"),
+            )
+    except Exception as exc:
+        logger.warning("optimization_subgraph_failed", error=str(exc))
 
     user_message = (
         "Current farm status snapshot:\n\n"
@@ -164,9 +203,19 @@ async def analyse_situation(state: AgentState) -> dict[str, Any]:
         f"- FCR: {growth.get('feed_conversion_ratio', 'N/A')}\n\n"
         f"**Active Alerts**: {len(alerts)} alert(s)\n"
         f"{json.dumps(alerts[:2], indent=2, ensure_ascii=False) if alerts else 'None'}\n\n"
-        "Analyse the situation and use the decide_control_action tool to specify what "
-        "actions, if any, should be taken."
+        + (
+            f"**Optimization Agent Recommendation**: {opt_decision.get('action', 'none')} "
+            f"(digital twin score: {opt_decision.get('score', 'N/A')})\n"
+            f"Reasoning: {opt_decision.get('reasoning', '')}\n\n"
+            if opt_decision else ""
+        )
+        + "Analyse the situation and use the decide_control_action tool to specify what "
+        "actions, if any, should be taken. Consider the optimization agent's recommendation."
     )
+
+    # ── Step 2: Build message history for the LLM call ────────────────────────
+    history: list[dict[str, Any]] = list(state.get("message_history") or [])
+    history.append({"role": "user", "content": user_message})
 
     try:
         import anthropic
@@ -178,8 +227,15 @@ async def analyse_situation(state: AgentState) -> dict[str, Any]:
             temperature=settings.llm_temperature,
             system=_SYSTEM_PROMPT,
             tools=_TOOLS,
-            messages=[{"role": "user", "content": user_message}],
+            messages=history,
         )
+
+        # Persist assistant turn so future cycles can reference prior reasoning
+        assistant_content = [
+            block.model_dump() if hasattr(block, "model_dump") else vars(block)
+            for block in response.content
+        ]
+        history.append({"role": "assistant", "content": assistant_content})
 
         decisions: list[dict[str, Any]] = []
         for block in response.content:
@@ -202,7 +258,11 @@ async def analyse_situation(state: AgentState) -> dict[str, Any]:
             decisions=len(decisions),
             actions=[d["action_type"] for d in decisions],
         )
-        return {"control_decisions": decisions}
+        return {
+            "control_decisions": decisions,
+            "message_history": history,
+            "twin_result": twin_result,
+        }
 
     except Exception as exc:
         logger.warning("llm_analysis_failed_using_rule_fallback", error=str(exc))
@@ -221,7 +281,11 @@ async def analyse_situation(state: AgentState) -> dict[str, Any]:
             "reasoning": f"[rule-based fallback] {result.reasoning}",
             "confidence": result.urgency,
         }]
-        return {"control_decisions": decisions}
+        return {
+            "control_decisions": decisions,
+            "message_history": history,
+            "twin_result": twin_result,
+        }
 
 
 async def execute_commands(state: AgentState) -> dict[str, Any]:
@@ -236,7 +300,7 @@ async def execute_commands(state: AgentState) -> dict[str, Any]:
     decisions = state.get("control_decisions", [])
     executed: list[dict[str, Any]] = []
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, headers=_svc_headers()) as client:
         for decision in decisions:
             action = decision.get("action_type")
             tank_id = decision.get("tank_id", "ALL")
@@ -263,9 +327,10 @@ async def execute_commands(state: AgentState) -> dict[str, Any]:
                     executed.append({"decision": decision, "status": "ok"})
 
                 elif action == "increase_aeration":
+                    boost = params.get("boost_pct", 30.0)
                     resp = await client.post(
                         f"{settings.backend_url}/api/v1/control/aeration/increase",
-                        json={"tank_id": tank_id},
+                        json={"tank_id": tank_id, "boost_pct": boost},
                     )
                     resp.raise_for_status()
                     executed.append({"decision": decision, "status": "ok"})

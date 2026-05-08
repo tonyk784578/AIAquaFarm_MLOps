@@ -1,0 +1,44 @@
+# Apply the full stack:
+#   kubectl apply -k infra/k8s/
+#
+# Deploy order:  namespace → configmap/secrets → statefulsets → deployments → ingress
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: aquafarm
+
+resources:
+  # Foundation
+  - namespace.yaml
+  - configmap.yaml
+  - secrets.yaml            # template — inject real values via CI/CD before applying
+
+  # Data layer (StatefulSets first — apps depend on them)
+  - postgres/configmap.yaml
+  - postgres/statefulset.yaml
+  - postgres/service.yaml
+  - redis/configmap.yaml
+  - redis/statefulset.yaml
+  - redis/service.yaml
+
+  # MLOps layer
+  - mlflow/pvc.yaml
+  - mlflow/deployment.yaml
+  - mlflow/service.yaml
+
+  # Application layer
+  - backend/deployment.yaml
+  - backend/service.yaml
+  - backend/hpa.yaml
+  - agents/deployment.yaml
+  - agents/service.yaml
+
+  # Batch
+  - mlops/cronjob.yaml
+
+  # Frontend
+  - frontend/deployment.yaml
+  - frontend/service.yaml
+
+  # Ingress (last — depends on all services)
+  - ingress.yaml

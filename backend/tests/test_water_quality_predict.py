@@ -6,24 +6,22 @@ real database or MLflow server is required.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
-from fastapi.testclient import TestClient
-
-from ai_modules.water_quality.model import SEQ_LEN, N_FEATURES
+from ai_modules.water_quality.model import N_FEATURES, SEQ_LEN
 from ai_modules.water_quality.schemas import (
     ForecastPoint,
     ForecastResponse,
     ModelStatusResponse,
     PredictResponse,
-    VirtualSensorPrediction,
 )
+from fastapi.testclient import TestClient
+
 from app.main import create_app
 from app.services.water_quality_service import WaterQualityInferenceEngine
-
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -43,7 +41,7 @@ def _mock_engine() -> MagicMock:
 
 
 def _mock_predict_response(tank_id: str = "TANK-01") -> PredictResponse:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return PredictResponse(
         tank_id=tank_id,
         predicted_at=now,
@@ -158,7 +156,7 @@ class TestPredictEndpoint:
 class TestForecastEndpoint:
     def test_forecast_returns_6_points(self, client: TestClient) -> None:
         """Forecast endpoint returns exactly 6 hourly ForecastPoints."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         forecast = ForecastResponse(
             tank_id="TANK-01",
             generated_at=now,
@@ -235,6 +233,7 @@ class TestWaterQualityServiceFetchWindow:
     async def test_fetch_window_returns_correct_shape(self) -> None:
         """Properly imputed window returns (SEQ_LEN, N_FEATURES) array."""
         import pandas as pd
+
         from app.services.water_quality_service import WaterQualityService
 
         timestamps = pd.date_range("2024-01-01", periods=SEQ_LEN, freq="h")

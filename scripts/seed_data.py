@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 BASE_URL = "http://localhost:8000"
-TANK_IDS = ["T001", "T002", "T003"]
+TANK_IDS = ["TANK-01", "TANK-02", "TANK-03"]  # must match DEFAULT_TANK_IDS in .env
 DAYS_OF_HISTORY = 7
 
 
@@ -91,7 +91,7 @@ async def seed() -> None:
 
         # Seed a sample alert
         alert = {
-            "tank_id": "T001",
+            "tank_id": "TANK-01",
             "severity": "warning",
             "category": "water_quality",
             "title": "암모니아 경고 수준 감지",

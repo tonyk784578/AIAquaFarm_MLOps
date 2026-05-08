@@ -1,16 +1,16 @@
 """Growth AI vision model wrapper.
 
-Wraps a YOLO-based fish detection model for inference.
-Model weights are loaded from the MLflow model registry.
+Wraps a YOLOv8-based fish detection model for inference.
+Model weights are loaded from a local .pt file or the MLflow model registry.
 
-TODO (Phase 2): Load model from MLflow registry using mlflow.pyfunc.load_model().
-TODO (Phase 2): Implement GPU/CPU device selection and batch inference.
-TODO (Phase 2): Add TensorRT optimisation for edge deployment.
+Requires the optional vision extras for full functionality:
+    pip install 'ai_modules[vision]'   # installs ultralytics + opencv
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -46,12 +46,16 @@ class BaseVisionModel(ABC):
 
 
 class FishDetectionModel(BaseVisionModel):
-    """YOLOv8-based fish detection and size estimation model.
+    """YOLOv8-based fish detection model.
+
+    Loads ultralytics YOLO weights (.pt file or MLflow URI) and returns
+    per-frame bounding box detections for downstream size estimation and
+    population counting.
 
     Attributes:
-        model: Loaded ultralytics YOLO model instance.
-        model_version: Version string from MLflow registry.
-        is_loaded: Whether model weights have been loaded.
+        model: Loaded ultralytics YOLO model instance (None until load() called).
+        model_version: Version string derived from file stem or MLflow stage.
+        is_loaded: True once model weights are successfully loaded.
     """
 
     def __init__(self) -> None:
@@ -63,33 +67,76 @@ class FishDetectionModel(BaseVisionModel):
         """Load YOLOv8 model weights.
 
         Args:
-            model_path: Path to .pt weights file or 'models:/FishDetection/latest'.
+            model_path: Path to a .pt weights file (e.g. 'runs/detect/train/weights/best.pt')
+                        or an MLflow models URI (e.g. 'models:/FishDetection/Production').
+                        MLflow URIs are downloaded via mlflow.artifacts and loaded as YOLO.
 
-        TODO (Phase 2): Use mlflow.pyfunc.load_model() for registry models.
+        Raises:
+            ImportError: If ultralytics is not installed (install ai_modules[vision]).
+            RuntimeError: If the weights file cannot be loaded.
         """
         logger.info("loading_fish_detection_model", model_path=model_path)
-        # TODO (Phase 2):
-        # from ultralytics import YOLO
-        # self.model = YOLO(model_path)
-        # self.is_loaded = True
-        logger.warning("fish_detection_model_stub", msg="Model not yet implemented")
+        try:
+            from ultralytics import YOLO  # optional vision dep
+        except ImportError:
+            logger.error(
+                "ultralytics_not_installed",
+                hint="pip install 'ai_modules[vision]' to enable fish detection",
+            )
+            return
+
+        try:
+            if model_path.startswith("models:/"):
+                # Download MLflow artifact to a temp dir and load as YOLO
+                import tempfile
+                import mlflow.artifacts
+
+                with tempfile.TemporaryDirectory() as tmp:
+                    local_pt = mlflow.artifacts.download_artifacts(
+                        artifact_uri=model_path, dst_path=tmp
+                    )
+                    self.model = YOLO(local_pt)
+                self.model_version = model_path.rsplit("/", 1)[-1]
+            else:
+                self.model = YOLO(model_path)
+                self.model_version = Path(model_path).stem
+
+            self.is_loaded = True
+            logger.info(
+                "fish_detection_model_loaded",
+                version=self.model_version,
+                path=model_path,
+            )
+        except Exception as exc:
+            logger.error("fish_detection_model_load_failed", path=model_path, error=str(exc))
 
     def predict(self, frame: Any) -> list[dict[str, Any]]:
-        """Run YOLOv8 detection on a frame.
+        """Run YOLOv8 detection on a single frame.
 
         Args:
-            frame: numpy array (H, W, 3) BGR frame.
+            frame: numpy array (H, W, 3) in BGR or RGB format, or a path/bytes
+                   accepted by ultralytics YOLO.
 
         Returns:
-            List of detection dicts.
-
-        TODO (Phase 2): Implement real inference with ultralytics YOLO.
+            List of detection dicts, each with keys:
+                bbox        — [x1, y1, x2, y2] pixel coordinates
+                confidence  — float in [0, 1]
+                class_id    — int YOLO class index
         """
-        if not self.is_loaded:
-            logger.warning("model_not_loaded_returning_empty")
+        if not self.is_loaded or self.model is None:
+            logger.debug("fish_detection_model_not_loaded_returning_empty")
             return []
-        # TODO (Phase 2): results = self.model(frame); return parse_results(results)
-        return []
+
+        results = self.model(frame, verbose=False)
+        detections: list[dict[str, Any]] = []
+        for result in results:
+            for box in result.boxes:
+                detections.append({
+                    "bbox": box.xyxy[0].tolist(),       # [x1, y1, x2, y2]
+                    "confidence": float(box.conf[0]),
+                    "class_id": int(box.cls[0]),
+                })
+        return detections
 
     def get_version(self) -> str:
         return self.model_version

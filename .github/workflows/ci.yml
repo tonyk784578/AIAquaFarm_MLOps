@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main, develop]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  # ── Lint ────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ruff
+        run: pip install ruff==0.15.12
+
+      - name: Lint backend
+        run: ruff check backend/app/ backend/tests/
+
+      - name: Lint agents
+        run: ruff check agents/
+
+      - name: Lint ai_modules
+        run: ruff check ai_modules/
+
+      - name: Lint mlops
+        run: ruff check mlops/ --ignore E501,B904
+
+  # ── Backend tests ────────────────────────────────────────────────────────────
+  test-backend:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg15
+        env:
+          POSTGRES_DB: aquafarm_test
+          POSTGRES_USER: aquafarm
+          POSTGRES_PASSWORD: aquafarm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aquafarm -d aquafarm_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://aquafarm:aquafarm_test@localhost:5432/aquafarm_test
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY: ci-test-secret-key-32-chars-minimum
+      ANTHROPIC_API_KEY: ""
+      LOG_LEVEL: warning
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ai_modules
+        run: pip install ai_modules/
+
+      - name: Install backend (dev)
+        run: pip install -e "backend/[dev]"
+
+      - name: Run tests
+        working-directory: backend
+        run: pytest tests/ -v --tb=short -x
+
+      - name: Upload coverage report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: backend/htmlcov/
+          retention-days: 7
+
+  # ── Docker build validation ──────────────────────────────────────────────────
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'   # only on PRs to save CI minutes
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          target: production
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build agents image
+        uses: docker/build-push-action@v6
+        with:
+          context: agents/
+          file: agents/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend/
+          file: frontend/Dockerfile
+          target: production
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
