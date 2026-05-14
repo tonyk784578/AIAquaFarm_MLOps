@@ -57,3 +57,7 @@ secrets/
 # Logs
 logs/
 *.log
+
+# Git push scripts (contains PAT — do not commit)
+git-scripts/push.sh
+git-scripts/push.bat
