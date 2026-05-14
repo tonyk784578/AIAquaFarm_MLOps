@@ -4,7 +4,7 @@ All routes require is_superuser=True (enforced by require_superuser dependency).
 """
 
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,7 +36,7 @@ class AdminUserUpdate(BaseModel):
 
 @router.get("/users", response_model=list[UserResponse])
 async def list_users(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_superuser),
 ) -> list[UserResponse]:

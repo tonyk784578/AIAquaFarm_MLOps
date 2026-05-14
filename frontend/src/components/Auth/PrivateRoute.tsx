@@ -1,5 +1,3 @@
-// PrivateRoute — redirect unauthenticated users to /login.
-
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 
@@ -13,8 +11,16 @@ export default function PrivateRoute({ children }: Props) {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-slate-400 animate-pulse text-sm">인증 확인 중...</div>
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: 'var(--bg-base)' }}
+      >
+        <div
+          className="text-sm animate-pulse"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          인증 확인 중...
+        </div>
       </div>
     )
   }

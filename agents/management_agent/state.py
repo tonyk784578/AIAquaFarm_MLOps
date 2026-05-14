@@ -20,7 +20,7 @@ class FarmSnapshot(TypedDict, total=False):
 class ControlDecision(TypedDict, total=False):
     """Control decision produced by the optimization agent."""
 
-    action_type: str  # 'feed' | 'adjust_pump' | 'alert' | 'no_action'
+    action_type: str  # 'stop_feeding' | 'reduce_feeding' | 'increase_aeration' | 'water_exchange' | 'create_alert' | 'no_action'
     tank_id: str
     parameters: dict[str, Any]
     reasoning: str

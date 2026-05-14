@@ -190,4 +190,17 @@ def get_settings() -> Settings:
     Returns:
         Cached Settings instance.
     """
-    return Settings()
+    import logging
+    _log = logging.getLogger(__name__)
+    s = Settings()
+    if s.secret_key == "dev_secret_change_me" and not s.debug:
+        _log.warning(
+            "SECRET_KEY is using the insecure development default. "
+            "Set SECRET_KEY in your environment before deploying to production."
+        )
+    if not s.internal_api_key:
+        _log.warning(
+            "INTERNAL_API_KEY is not set. "
+            "Service-to-service authentication (agents → backend) is disabled."
+        )
+    return s

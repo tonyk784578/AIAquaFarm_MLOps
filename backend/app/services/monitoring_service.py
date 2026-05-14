@@ -125,6 +125,8 @@ class MonitoringService:
             where_clauses.append("measured_at <= :end_time")
             params["end_time"] = end_time
 
+        # where_sql is assembled exclusively from hardcoded string literals above —
+        # no user input is interpolated. All actual values use :param bindings.
         where_sql = " AND ".join(where_clauses)
         sql = text(f"""
             SELECT

@@ -15,6 +15,24 @@ const CATEGORY_LABELS: Record<string, string> = {
   system: '시스템',
 }
 
+function severityColor(s: Alert['severity']): string {
+  if (s === 'critical') return 'var(--danger)'
+  if (s === 'warning')  return 'var(--warn)'
+  return 'var(--info)'
+}
+
+function severityBg(s: Alert['severity']): string {
+  if (s === 'critical') return 'rgba(220,38,38,0.07)'
+  if (s === 'warning')  return 'rgba(217,119,6,0.07)'
+  return 'rgba(37,99,235,0.07)'
+}
+
+function severityBorder(s: Alert['severity']): string {
+  if (s === 'critical') return 'rgba(220,38,38,0.25)'
+  if (s === 'warning')  return 'rgba(217,119,6,0.25)'
+  return 'rgba(37,99,235,0.25)'
+}
+
 export default function AlertPanel({ alerts }: Props) {
   const qc = useQueryClient()
 
@@ -31,60 +49,67 @@ export default function AlertPanel({ alerts }: Props) {
     <div className="card">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-red-400" />
-          <h2 className="font-medium text-slate-200">알림</h2>
+          <AlertTriangle size={15} style={{ color: 'var(--danger)' }} />
+          <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>알림</h2>
         </div>
         {alerts.length > 0 && (
-          <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">
-            {alerts.length}
-          </span>
+          <span className="badge-danger">{alerts.length}</span>
         )}
       </div>
 
       {alerts.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-32 text-slate-500">
-          <CheckCircle className="w-8 h-8 mb-1 text-emerald-500/40" />
-          <span className="text-sm">활성 알림 없음</span>
+        <div className="flex flex-col items-center justify-center h-32">
+          <CheckCircle size={32} className="mb-2" style={{ color: 'var(--ok)', opacity: 0.4 }} />
+          <span className="text-sm" style={{ color: 'var(--text-muted)' }}>활성 알림 없음</span>
         </div>
       ) : (
         <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
           {alerts.map((alert) => (
             <div
               key={alert.id}
-              className={`p-3 rounded-lg border text-sm ${
-                alert.severity === 'critical'
-                  ? 'bg-red-500/10 border-red-500/30'
-                  : alert.severity === 'warning'
-                  ? 'bg-yellow-500/10 border-yellow-500/30'
-                  : 'bg-slate-700/50 border-slate-600'
-              }`}
+              className="p-3 rounded-xl"
+              style={{
+                backgroundColor: severityBg(alert.severity),
+                border: `1px solid ${severityBorder(alert.severity)}`,
+              }}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 mb-0.5">
+                  <div className="flex items-center gap-1.5 mb-1 flex-wrap">
                     <span
-                      className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                        alert.severity === 'critical'
-                          ? 'bg-red-500/20 text-red-400'
-                          : alert.severity === 'warning'
-                          ? 'bg-yellow-500/20 text-yellow-400'
-                          : 'bg-slate-600 text-slate-400'
-                      }`}
+                      className="text-xs px-1.5 py-0.5 rounded-md font-semibold"
+                      style={{
+                        color: severityColor(alert.severity),
+                        backgroundColor: severityBg(alert.severity),
+                      }}
                     >
                       {CATEGORY_LABELS[alert.category] ?? alert.category}
                     </span>
-                    <span className="text-xs text-slate-500">{alert.tank_id}</span>
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{alert.tank_id}</span>
                   </div>
-                  <p className="font-medium text-slate-200 truncate">{alert.title}</p>
-                  <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">{alert.message}</p>
+                  <p className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                    {alert.title}
+                  </p>
+                  <p className="text-xs mt-0.5 line-clamp-2" style={{ color: 'var(--text-secondary)' }}>
+                    {alert.message}
+                  </p>
                 </div>
                 <button
                   onClick={() => resolveMut.mutate(alert.id)}
                   disabled={resolveMut.isPending}
                   title="해결"
-                  className="shrink-0 p-1 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-400/10 transition-colors disabled:opacity-40"
+                  className="shrink-0 p-1.5 rounded-lg transition-colors disabled:opacity-40"
+                  style={{ color: 'var(--text-muted)' }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = 'var(--ok)'
+                    e.currentTarget.style.backgroundColor = 'rgba(5,150,105,0.1)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = 'var(--text-muted)'
+                    e.currentTarget.style.backgroundColor = 'transparent'
+                  }}
                 >
-                  <CheckCircle className="w-4 h-4" />
+                  <CheckCircle size={14} />
                 </button>
               </div>
             </div>

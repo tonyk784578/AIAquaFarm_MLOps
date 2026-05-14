@@ -250,7 +250,7 @@ class WaterQualityPredictionModel:
         Args:
             path: Path to checkpoint file.
         """
-        ckpt = torch.load(path, map_location=self.device, weights_only=False)
+        ckpt = torch.load(path, map_location=self.device, weights_only=True)
         if "config" in ckpt:
             self.cfg = WQModelConfig(**ckpt["config"])
         self._model = build_model(self.cfg).to(self.device)

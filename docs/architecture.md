@@ -11,7 +11,7 @@ AIAquafarm은 RAS(순환여과식) 양식장을 위한 AI 통합 관리 플랫�
 
 ### Layer 1 — 통합 대시보드 (Frontend)
 
-**기술**: React 18 + TypeScript + Vite + TailwindCSS + React Query
+**기술**: React 18 + TypeScript + Vite + TailwindCSS + React Query + Recharts + Zustand
 
 **책임**:
 
@@ -19,6 +19,32 @@ AIAquafarm은 RAS(순환여과식) 양식장을 위한 AI 통합 관리 플랫�
 - 알림 수신 및 해결 인터페이스
 - 장비 원격 제어 패널
 - WebSocket 기반 실시간 데이터 수신
+
+**페이지 구성**:
+
+| 경로 | 컴포넌트 | 설명 |
+| ---- | -------- | ---- |
+| `/dashboard` | `Dashboard/index.tsx` | KPI 요약 + 수질·성장·급이·알림 패널 |
+| `/water-quality` | `WaterQuality/WaterQualityPage.tsx` | 수질 지표 상세 + 24h 이력 차트 |
+| `/control` | `Control/ControlPanel.tsx` | 장치 원격 제어 |
+| `/growth` | `Growth/GrowthPage.tsx` | 어류 성장 추이 |
+| `/feeding` | `Feeding/FeedingPage.tsx` | 급이 이벤트 및 활성도 |
+| `/alerts` | `Alerts/AlertsPage.tsx` | 알림 목록 및 해제 |
+| `/mlops` | `MLOps/MLOpsPage.tsx` | 에이전트 상태·모델 레지스트리 |
+| `/settings` | `Settings/SettingsPage.tsx` | 임계값·모델 상태 설정 |
+
+**다크 모드**:
+
+- `stores/themeStore.ts` — Zustand persist 스토어. 선택값을 localStorage(`aq-theme`)에 저장하여 새로고침 후에도 유지.
+- `main.tsx` — 첫 렌더 전 `document.documentElement.classList.add('dark')` 적용으로 색상 플래시 방지.
+- `global.css` — CSS 변수 기반 테마 (`--bg-base`, `--text-primary` 등). `:root`와 `.dark` 선택자로 라이트/다크 분기.
+
+**Mock 데이터 모드**:
+
+- `VITE_USE_MOCK=true` (`.env.local`) 설정 시 활성화.
+- `mocks/setup.ts` — axios 커스텀 어댑터로 `apiClient`, `agentClient` 요청을 intercept.
+- `mocks/data.ts` — 결정론적 seed 기반 목 데이터 생성기. 수질 이력·성장·급이·알림·에이전트 결과 포함.
+- 실제 네트워크 요청 없음. 로그인 포함 전체 UI를 오프라인으로 시연 가능.
 
 **인증**:
 

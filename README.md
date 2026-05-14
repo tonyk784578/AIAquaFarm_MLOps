@@ -127,7 +127,9 @@ Redis 채널: wq:{tank_id}
 | 계층 | 기술 | 역할 |
 |------|------|------|
 | **프론트엔드** | React 18, TypeScript, Vite, TailwindCSS | 대시보드 UI |
-| | React Query, Axios, React Router | 상태관리·API·라우팅 |
+| | React Query, Axios, React Router | 서버 상태·API·라우팅 |
+| | Recharts | 실시간 차트 시각화 |
+| | Zustand (persist) | 클라이언트 상태 (다크 모드 등) |
 | **백엔드** | FastAPI, Uvicorn (4 workers) | REST + WebSocket API |
 | | SQLAlchemy 2.0 (async), asyncpg | 비동기 ORM |
 | | Alembic | DB 스키마 마이그레이션 |
@@ -214,6 +216,26 @@ AIAquafarm Service Health Check
 ```bash
 make dev   # 백엔드 코드 변경 시 자동 반영
 ```
+
+### (선택) 프론트엔드 로컬 dev 서버
+
+Docker 없이 프론트엔드만 실행하거나 최신 UI 변경사항을 즉시 확인할 때 사용합니다.
+
+```bash
+cd frontend
+npm install
+npm run dev          # http://localhost:5173 (백엔드 자동 프록시)
+```
+
+**Mock 모드** — 백엔드 없이 UI만 개발할 때:
+
+```bash
+# frontend/.env.local
+VITE_USE_MOCK=true
+```
+
+`VITE_USE_MOCK=true` 설정 시 모든 API 호출이 `src/mocks/` 의 결정론적 목 데이터로 intercept됩니다.
+실제 네트워크 요청은 발생하지 않으며, 로그인 포함 전체 UI를 오프라인으로 동작시킬 수 있습니다.
 
 ---
 
@@ -399,15 +421,24 @@ AIAquafarm_MLOps/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── Auth/           → 로그인 페이지
-│   │   │   ├── Dashboard/      → 수질·성장·급이·알림 패널
+│   │   │   ├── Dashboard/      → 수질·성장·급이·알림 패널 + KPI 요약
+│   │   │   ├── WaterQuality/   → 수질 상세 페이지 (/water-quality)
 │   │   │   ├── Control/        → 장치 제어 패널
 │   │   │   ├── Alerts/         → 알림 목록
+│   │   │   ├── Growth/         → 성장 관리 페이지
+│   │   │   ├── Feeding/        → 먹이 관리 페이지
+│   │   │   ├── MLOps/          → MLOps 상태 페이지
 │   │   │   ├── Settings/       → 모델 상태·임계값 설정
-│   │   │   └── Layout/         → Header·Sidebar
+│   │   │   └── Layout/         → Header (다크모드 토글·알림 벨)·Sidebar
 │   │   ├── context/
 │   │   │   └── AuthContext.tsx → httpOnly 쿠키 기반 인증 상태
 │   │   ├── hooks/
 │   │   │   └── useWebSocket.ts → WebSocket 자동 재연결
+│   │   ├── mocks/
+│   │   │   ├── data.ts         → 결정론적 목 데이터 생성기 (수질·성장·급이·알림)
+│   │   │   └── setup.ts        → axios 어댑터 기반 mock 인터셉터 (VITE_USE_MOCK=true)
+│   │   ├── stores/
+│   │   │   └── themeStore.ts   → Zustand persist 다크 모드 토글 (localStorage: aq-theme)
 │   │   ├── services/
 │   │   │   └── api.ts          → axios 클라이언트 (apiClient·agentClient)
 │   │   └── types/index.ts      → 공유 TypeScript 타입
@@ -439,10 +470,18 @@ AIAquafarm_MLOps/
 
 ### 대시보드 (`/dashboard`)
 
+- **KPI 요약 행**: 운영 중 수조 수·활성 알림 수·총 바이오매스·현재 수온/DO
 - **수질 패널**: 실시간 온도·pH·DO·탁도·암모니아·아질산 수치, AI 예측값
 - **성장 패널**: 평균 체장·체중·마리수·생체중·FCR(사료전환율) 추이
 - **급이 패널**: 최근 급이 이벤트, 권장 급이량 vs 실제 급이량
 - **알림 패널**: 활성 경보 (심각도: critical·warning·info)
+- **WebSocket 토스트**: 새 알림 수신 시 화면 우하단에 8초간 팝업
+
+### 수질 모니터링 (`/water-quality`)
+
+- 수조별 현재 수질 지표 상세 조회
+- 24시간 이력 차트 (Recharts): 온도·pH·DO·암모니아·아질산·탁도
+- 임계값 위반 시 인라인 경고 표시
 
 ### 제어 패널 (`/control`)
 
@@ -601,6 +640,7 @@ POST /api/v1/auth/login  →  httpOnly 쿠키 설정
 | `ANTHROPIC_API_KEY` | ✅ | - | Claude AI 에이전트 API 키 |
 | `POSTGRES_PASSWORD` | ✅ | aquafarm_secret | PostgreSQL 비밀번호 |
 | `CORS_ORIGINS` | ✅ | localhost:3000, localhost | CORS 허용 오리진 (JSON 배열) |
+| `VITE_USE_MOCK` | - | false | 프론트엔드 목 데이터 모드 (`frontend/.env.local`에 설정) |
 | `REGISTRATION_OPEN` | - | false | 회원가입 활성화 (초기 셋업 시만 true) |
 | `COOKIE_SECURE` | - | false | HTTPS 쿠키 (프로덕션 true) |
 | `LOG_LEVEL` | - | info | 로그 레벨 |
@@ -639,6 +679,7 @@ POST /api/v1/auth/login  →  httpOnly 쿠키 설정
 - [x] **Phase 4**: MLOps 자동화 — AutoML, ONNX 엣지 배포, A/B 카나리, PSI 드리프트 감지
 - [x] **Phase 5**: Kubernetes 매니페스트 (HPA·CronJob·Ingress·kustomize), GitHub Actions CI
 - [x] **QA**: Docker 전체 스택 빌드·실행 검증, make migrate·seed 통과, 보안 버그 수정
+- [x] **UI 개선**: 수질 전용 상세 페이지(`/water-quality`), 다크 모드 토글, Mock 데이터 모드, Recharts 기반 차트, Zustand 상태관리 추가
 
 ---
 

@@ -17,16 +17,16 @@ const CATEGORY_LABELS: Record<string, string> = {
   water_quality: '수질', fish_growth: '성장', feeding: '급이', equipment: '장비', system: '시스템',
 }
 
-function severityClass(s: AlertSeverity) {
-  if (s === 'critical') return 'bg-red-500/10 border-red-500/30 text-red-400'
-  if (s === 'warning') return 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
-  return 'bg-slate-700/50 border-slate-600 text-slate-400'
+function severityColor(s: AlertSeverity) {
+  if (s === 'critical') return 'var(--danger)'
+  if (s === 'warning')  return 'var(--warn)'
+  return 'var(--info)'
 }
 
-function badgeClass(s: AlertSeverity) {
-  if (s === 'critical') return 'bg-red-500/20 text-red-400'
-  if (s === 'warning') return 'bg-yellow-500/20 text-yellow-400'
-  return 'bg-slate-600 text-slate-400'
+function severityBg(s: AlertSeverity) {
+  if (s === 'critical') return 'rgba(220,38,38,0.07)'
+  if (s === 'warning')  return 'rgba(217,119,6,0.07)'
+  return 'rgba(37,99,235,0.07)'
 }
 
 function formatRelative(iso: string) {
@@ -46,8 +46,7 @@ export default function AlertsPage() {
 
   const { data: alerts = [], isFetching, refetch } = useQuery<Alert[]>({
     queryKey: ['alerts', activeOnly, tank],
-    queryFn: () =>
-      listAlerts({ tank_id: tank === 'all' ? undefined : tank, active_only: activeOnly, limit: 100 }),
+    queryFn: () => listAlerts({ tank_id: tank === 'all' ? undefined : tank, active_only: activeOnly, limit: 100 }),
     refetchInterval: 15_000,
   })
 
@@ -65,135 +64,131 @@ export default function AlertsPage() {
   const critCount = alerts.filter((a) => a.severity === 'critical').length
   const warnCount = alerts.filter((a) => a.severity === 'warning').length
 
+  const filterBtnStyle = (active: boolean) =>
+    active
+      ? { background: 'linear-gradient(135deg, var(--teal-500), var(--blue-500))', color: '#fff', borderRadius: 8, padding: '4px 12px', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer' }
+      : { backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--bg-border)', color: 'var(--text-secondary)', borderRadius: 8, padding: '4px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <AlertTriangle className="w-5 h-5 text-red-400" />
-          <h1 className="text-lg font-semibold text-slate-100">알림</h1>
-          {critCount > 0 && (
-            <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">
-              위험 {critCount}
-            </span>
-          )}
-          {warnCount > 0 && (
-            <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded-full">
-              경고 {warnCount}
-            </span>
-          )}
+        <div className="flex items-center gap-3">
+          <h1 className="page-title flex items-center gap-2">
+            <AlertTriangle size={18} style={{ color: 'var(--danger)' }} />
+            알림
+          </h1>
+          {critCount > 0 && <span className="badge-danger">위험 {critCount}</span>}
+          {warnCount > 0 && <span className="badge-warn">경고 {warnCount}</span>}
         </div>
         <button
           onClick={() => refetch()}
           disabled={isFetching}
-          className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+          className="flex items-center gap-1.5 text-xs transition-colors"
+          style={{ color: 'var(--text-secondary)' }}
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? 'animate-spin' : ''}`} />
+          <RefreshCw size={13} className={isFetching ? 'animate-spin' : ''} />
           새로고침
         </button>
       </div>
 
       {/* Filter bar */}
-      <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-        <div className="flex flex-wrap gap-4 items-center">
-          <div className="flex items-center gap-1.5 text-xs text-slate-400">
-            <Filter className="w-3.5 h-3.5" />
-            필터
+      <div className="card">
+        <div className="flex flex-wrap gap-3 items-center">
+          <div className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>
+            <Filter size={13} />필터
           </div>
 
-          {/* Active toggle */}
-          <div className="flex gap-1">
+          <div className="flex gap-1.5">
             {[true, false].map((v) => (
-              <button
-                key={String(v)}
-                onClick={() => setActiveOnly(v)}
-                className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
-                  activeOnly === v ? 'bg-sky-500/20 text-sky-400' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
+              <button key={String(v)} onClick={() => setActiveOnly(v)} style={filterBtnStyle(activeOnly === v)}>
                 {v ? '미해결' : '전체'}
               </button>
             ))}
           </div>
 
-          <div className="w-px h-4 bg-slate-700" />
+          <div className="w-px h-4" style={{ backgroundColor: 'var(--bg-border)' }} />
 
-          {/* Severity */}
-          <div className="flex gap-1">
+          <div className="flex gap-1.5 flex-wrap">
             {SEVERITY_OPTIONS.map((s) => (
-              <button
-                key={s}
-                onClick={() => setSeverity(s)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                  severity === s ? 'bg-sky-500/20 text-sky-400' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
+              <button key={s} onClick={() => setSeverity(s)} style={filterBtnStyle(severity === s)}>
                 {s === 'all' ? '모든 심각도' : SEVERITY_LABELS[s]}
               </button>
             ))}
           </div>
 
-          <div className="w-px h-4 bg-slate-700" />
+          <div className="w-px h-4" style={{ backgroundColor: 'var(--bg-border)' }} />
 
-          {/* Category */}
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value as AlertCategory | 'all')}
-            className="bg-slate-700 border border-slate-600 text-slate-300 text-xs rounded-lg px-2.5 py-1 outline-none focus:ring-1 focus:ring-sky-500"
+            className="input-base"
+            style={{ width: 'auto', padding: '4px 10px' }}
           >
             {CATEGORY_OPTIONS.map((c) => (
-              <option key={c} value={c}>
-                {c === 'all' ? '모든 카테고리' : CATEGORY_LABELS[c]}
-              </option>
+              <option key={c} value={c}>{c === 'all' ? '모든 카테고리' : CATEGORY_LABELS[c]}</option>
             ))}
           </select>
 
-          {/* Tank */}
           <select
             value={tank}
             onChange={(e) => setTank(e.target.value)}
-            className="bg-slate-700 border border-slate-600 text-slate-300 text-xs rounded-lg px-2.5 py-1 outline-none focus:ring-1 focus:ring-sky-500"
+            className="input-base"
+            style={{ width: 'auto', padding: '4px 10px' }}
           >
             {TANK_OPTIONS.map((t) => (
               <option key={t} value={t}>{t === 'all' ? '모든 수조' : t}</option>
             ))}
           </select>
 
-          <span className="ml-auto text-xs text-slate-500">{filtered.length}건</span>
+          <span className="ml-auto text-xs" style={{ color: 'var(--text-muted)' }}>{filtered.length}건</span>
         </div>
       </div>
 
       {/* Alert list */}
       {filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-48 text-slate-500 bg-slate-800 rounded-xl border border-slate-700">
-          <CheckCircle className="w-10 h-10 mb-2 text-emerald-500/40" />
-          <p>조건에 맞는 알림 없음</p>
+        <div
+          className="flex flex-col items-center justify-center h-48 rounded-2xl"
+          style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--bg-border)' }}
+        >
+          <CheckCircle size={40} className="mb-2" style={{ color: 'var(--ok)', opacity: 0.4 }} />
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>조건에 맞는 알림 없음</p>
         </div>
       ) : (
         <div className="space-y-2">
           {filtered.map((alert) => (
             <div
               key={alert.id}
-              className={`rounded-xl border p-4 ${severityClass(alert.severity)}`}
+              className="rounded-2xl p-4"
+              style={{
+                backgroundColor: severityBg(alert.severity),
+                border: `1px solid ${severityColor(alert.severity)}40`,
+              }}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${badgeClass(alert.severity)}`}>
+                    <span
+                      className="text-xs px-2 py-0.5 rounded-lg font-semibold"
+                      style={{ color: severityColor(alert.severity), backgroundColor: `${severityColor(alert.severity)}18` }}
+                    >
                       {SEVERITY_LABELS[alert.severity]}
                     </span>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">
+                    <span
+                      className="text-xs px-2 py-0.5 rounded-lg font-medium"
+                      style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+                    >
                       {CATEGORY_LABELS[alert.category] ?? alert.category}
                     </span>
-                    <span className="text-xs text-slate-500">{alert.tank_id}</span>
-                    <span className="text-xs text-slate-600 ml-auto">
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{alert.tank_id}</span>
+                    <span className="text-xs ml-auto" style={{ color: 'var(--text-muted)' }}>
                       {formatRelative(alert.created_at)}
                     </span>
                   </div>
-                  <p className="font-medium text-slate-100 text-sm">{alert.title}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">{alert.message}</p>
+                  <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{alert.title}</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>{alert.message}</p>
                   {alert.metric_name && (
-                    <p className="text-xs text-slate-500 mt-1">
+                    <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
                       {alert.metric_name}: {alert.metric_value}
                       {alert.threshold_value && ` (임계값: ${alert.threshold_value})`}
                     </p>
@@ -204,16 +199,15 @@ export default function AlertsPage() {
                   <button
                     onClick={() => resolveMut.mutate(alert.id)}
                     disabled={resolveMut.isPending}
-                    className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-slate-100 text-xs transition-colors disabled:opacity-50"
+                    className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+                    style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--bg-border)', color: 'var(--text-secondary)' }}
                   >
-                    <CheckCircle className="w-3.5 h-3.5" />
-                    해결
+                    <CheckCircle size={13} />해결
                   </button>
                 )}
                 {!alert.is_active && alert.resolved_at && (
-                  <span className="shrink-0 text-xs text-emerald-400 flex items-center gap-1">
-                    <CheckCircle className="w-3.5 h-3.5" />
-                    해결됨
+                  <span className="shrink-0 text-xs flex items-center gap-1" style={{ color: 'var(--ok)' }}>
+                    <CheckCircle size={13} />해결됨
                   </span>
                 )}
               </div>

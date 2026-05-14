@@ -153,7 +153,7 @@ class FeedingActivityModel(BaseVisionModel):
                     )
 
             net = _build_cnn().to(self.device)
-            ckpt = torch.load(model_path, map_location=self.device, weights_only=False)
+            ckpt = torch.load(model_path, map_location=self.device, weights_only=True)
 
             state = ckpt.get("model_state_dict", ckpt)
             net.load_state_dict(state)

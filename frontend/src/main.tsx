@@ -1,23 +1,26 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import './styles/global.css'
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 5_000,
-      retry: 2,
-      refetchInterval: 10_000,  // Auto-refresh every 10 s
-    },
-  },
-})
+// Apply saved dark mode before first render to prevent flash
+try {
+  const saved = localStorage.getItem('aq-theme')
+  if (saved && JSON.parse(saved)?.state?.isDark) {
+    document.documentElement.classList.add('dark')
+  }
+} catch {
+  // ignore
+}
+
+// Enable mock data when VITE_USE_MOCK=true (set in .env.local for dev demos)
+if (import.meta.env.VITE_USE_MOCK === 'true') {
+  const { setupMocks } = await import('./mocks/setup')
+  setupMocks()
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
+    <App />
   </React.StrictMode>
 )

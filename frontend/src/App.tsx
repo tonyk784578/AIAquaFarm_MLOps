@@ -12,6 +12,7 @@ import FeedingPage from '@/components/Feeding/FeedingPage'
 import AlertsPage from '@/components/Alerts/AlertsPage'
 import MLOpsPage from '@/components/MLOps/MLOpsPage'
 import SettingsPage from '@/components/Settings/SettingsPage'
+import WaterQualityPage from '@/components/WaterQuality/WaterQualityPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,7 +22,7 @@ const queryClient = new QueryClient({
 
 function AppLayout() {
   return (
-    <div className="flex h-screen bg-slate-900 text-slate-100 overflow-hidden">
+    <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'var(--bg-base)' }}>
       <Sidebar />
       <div className="flex flex-col flex-1 overflow-hidden">
         <Header />
@@ -29,6 +30,7 @@ function AppLayout() {
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/water-quality" element={<WaterQualityPage />} />
             <Route path="/control" element={<ControlPanel />} />
             <Route path="/growth" element={<GrowthPage />} />
             <Route path="/feeding" element={<FeedingPage />} />
@@ -39,7 +41,9 @@ function AppLayout() {
               path="*"
               element={
                 <div className="flex items-center justify-center h-full">
-                  <p className="text-slate-400 text-lg">Page not found</p>
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                    페이지를 찾을 수 없습니다
+                  </p>
                 </div>
               }
             />

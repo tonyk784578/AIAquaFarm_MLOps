@@ -18,10 +18,10 @@ import type {
   WaterQualityReading,
 } from '@/types'
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-// In production the frontend nginx proxies /agents/ → agents:8001, so /agents is the correct
-// relative base. In dev, Vite's proxy also intercepts /agents/* → localhost:8001.
-const AGENT_BASE_URL = import.meta.env.VITE_AGENT_BASE_URL || '/agents'
+// Empty string → relative URL → goes through Vite proxy in dev, Nginx proxy in prod.
+// Set VITE_API_BASE_URL only when backend is on a different host entirely.
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+const AGENT_BASE_URL = import.meta.env.VITE_AGENT_BASE_URL ?? '/agents'
 
 export const apiClient = axios.create({
   baseURL: `${BASE_URL}/api`,

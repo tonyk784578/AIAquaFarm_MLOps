@@ -82,6 +82,27 @@ REGISTRATION_OPEN=false make up
 make dev
 ```
 
+### 프론트엔드 로컬 dev 서버
+
+Docker 이미지 재빌드 없이 최신 UI 변경사항을 즉시 확인하려면:
+
+```bash
+cd frontend
+npm install
+npm run dev    # http://localhost:5173
+               # /api → localhost:8000, /agents → localhost:8001 자동 프록시
+```
+
+### Mock 데이터 모드 (백엔드 없이 UI 개발)
+
+```bash
+# frontend/.env.local
+VITE_USE_MOCK=true
+```
+
+설정 후 `npm run dev` 실행 시 모든 API 호출이 `src/mocks/` 목 데이터로 intercept됩니다.
+실제 네트워크 요청이 발생하지 않으므로 백엔드·DB 없이 전체 UI를 시연할 수 있습니다.
+
 ### 개별 서비스 시작
 
 ```bash

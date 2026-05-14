@@ -136,14 +136,16 @@ Registered model names: `FishDetection`, `FeedingActivityClassifier`, `WaterQual
 
 ### Frontend (`frontend/`)
 
-React 18 + TypeScript + Vite + TailwindCSS. State: React Query (`@tanstack/react-query`) for server state, `AuthContext` for user profile.
+React 18 + TypeScript + Vite + TailwindCSS. State: React Query (`@tanstack/react-query`) for server state, Zustand (`src/stores/themeStore.ts`) for client state, `AuthContext` for user profile.
 
 - **Auth flow**: tokens are stored in **httpOnly cookies** set by the server on login; JavaScript never reads them. `AuthContext` tracks only the user profile object (`UserProfile`). On 401, the interceptor calls `POST /v1/auth/refresh` with no body — the `aq_refresh` cookie is sent automatically.
 - **API client**: `src/services/api.ts` — all functions call `apiClient` (axios instance with `baseURL = VITE_API_BASE_URL/api`, `withCredentials: true`). Endpoints are prefixed `/v1/…`.
 - **Agent client**: `src/services/api.ts` — `agentClient` with `baseURL = VITE_AGENT_BASE_URL || '/agents'`. Agent API paths are relative (`health`, `run`, `optimize`).
 - **WebSocket**: `src/hooks/useWebSocket.ts` — connects to `ws://{host}/api/v1/ws/monitoring/{tankId}`, auto-reconnects with exponential backoff. Cookie auth applies to the upgrade handshake.
 - **Dev proxy** (`vite.config.ts`): `/api` → `localhost:8000`, `/agents` → `localhost:8001` (with path rewrite).
-- **Key pages**: `/dashboard` (WaterQuality + FishGrowth + Feeding + Alert panels), `/control` (ControlPanel), `/settings` (SettingsPage with model status cards + threshold editor), `/login` (LoginPage).
+- **Mock mode**: set `VITE_USE_MOCK=true` in `frontend/.env.local`. `src/mocks/setup.ts` installs axios custom adapters that intercept all `apiClient` and `agentClient` requests; `src/mocks/data.ts` provides deterministic seed-based data. No network calls are made; the full UI including login works offline.
+- **Dark mode**: `src/stores/themeStore.ts` (Zustand persist, key `aq-theme`). `main.tsx` applies the saved class before first render to prevent flash. Styles use CSS variables defined in `global.css` (`:root` / `.dark`).
+- **Key pages**: `/dashboard` (KPI row + WaterQuality + FishGrowth + Feeding + Alert panels), `/water-quality` (WaterQualityPage — per-tank detail + 24h Recharts history), `/control` (ControlPanel), `/growth` (GrowthPage), `/feeding` (FeedingPage), `/alerts` (AlertsPage), `/mlops` (MLOpsPage), `/settings` (SettingsPage with model status cards + threshold editor), `/login` (LoginPage).
 
 ### Digital Twin (`agents/optimization_agent/twin_sim.py`)
 

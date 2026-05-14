@@ -7,9 +7,7 @@ import type { FeedingRecord } from '@/types'
 const TANK_OPTIONS = ['TANK-01', 'TANK-02', 'TANK-03']
 
 const TRIGGER_LABELS: Record<string, string> = {
-  ai: 'AI',
-  manual: '수동',
-  schedule: '스케줄',
+  ai: 'AI', manual: '수동', schedule: '스케줄',
 }
 
 function formatDate(iso: string) {
@@ -19,20 +17,17 @@ function formatDate(iso: string) {
 
 function ActivityBar({ score }: { score: number | null }) {
   const pct = score != null ? Math.round(score * 100) : 0
-  const color =
-    pct >= 70 ? 'bg-emerald-400' : pct >= 40 ? 'bg-amber-400' : 'bg-red-400'
+  const color = pct >= 70 ? 'var(--ok)' : pct >= 40 ? 'var(--warn)' : 'var(--danger)'
   return (
     <div>
-      <div className="flex justify-between text-xs mb-1">
-        <span className="text-slate-400">먹이활성도</span>
-        <span className={pct >= 70 ? 'text-emerald-400' : pct >= 40 ? 'text-amber-400' : 'text-red-400'}>
-          {score != null ? `${pct}%` : '—'}
-        </span>
+      <div className="flex justify-between text-xs mb-1.5">
+        <span style={{ color: 'var(--text-secondary)' }}>먹이활성도</span>
+        <span className="font-bold" style={{ color }}>{score != null ? `${pct}%` : '—'}</span>
       </div>
-      <div className="h-2.5 bg-slate-700 rounded-full overflow-hidden">
+      <div className="h-2.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)' }}>
         <div
-          className={`h-full rounded-full transition-all duration-700 ${color}`}
-          style={{ width: `${pct}%` }}
+          className="h-full rounded-full transition-all duration-700"
+          style={{ width: `${pct}%`, backgroundColor: color }}
         />
       </div>
     </div>
@@ -56,46 +51,47 @@ export default function FeedingPage() {
     mutationFn: () => triggerFeeding(tank, parseFloat(amount) || 1.0),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['feeding', tank] }),
   })
-
   const stopMut = useMutation({
     mutationFn: () => stopFeeding(tank),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['feeding', tank] }),
   })
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Utensils className="w-5 h-5 text-amber-400" />
-          <h1 className="text-lg font-semibold text-slate-100">급이 관리</h1>
-        </div>
+        <h1 className="page-title flex items-center gap-2">
+          <Utensils size={18} style={{ color: 'var(--warn)' }} />
+          급이 관리
+        </h1>
         <button
           onClick={() => refetch()}
           disabled={isFetching}
-          className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+          className="flex items-center gap-1.5 text-xs transition-colors"
+          style={{ color: 'var(--text-secondary)' }}
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? 'animate-spin' : ''}`} />
+          <RefreshCw size={13} className={isFetching ? 'animate-spin' : ''} />
           새로고침
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: status + trigger */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Left column */}
         <div className="space-y-4">
           {/* Tank selector */}
-          <div className="bg-slate-800 rounded-xl border border-slate-700 p-4 space-y-3">
-            <label className="text-xs text-slate-400 font-medium">수조 선택</label>
+          <div className="card">
+            <p className="section-title">수조 선택</p>
             <div className="flex gap-2">
               {TANK_OPTIONS.map((t) => (
                 <button
                   key={t}
                   onClick={() => setTank(t)}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                  style={
                     tank === t
-                      ? 'bg-sky-500/20 text-sky-400 border border-sky-500/40'
-                      : 'bg-slate-700 text-slate-400 hover:text-slate-200'
-                  }`}
+                      ? { background: 'linear-gradient(135deg, var(--teal-500), var(--blue-500))', color: '#fff' }
+                      : { backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--bg-border)', color: 'var(--text-secondary)' }
+                  }
                 >
                   {t}
                 </button>
@@ -103,149 +99,132 @@ export default function FeedingPage() {
             </div>
           </div>
 
-          {/* Current status */}
-          <div className="bg-slate-800 rounded-xl border border-slate-700 p-4 space-y-4">
-            <h2 className="text-sm font-medium text-slate-200">현재 상태</h2>
+          {/* Status */}
+          <div className="card space-y-4">
+            <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>현재 상태</h2>
             <ActivityBar score={latest?.activity_score ?? null} />
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <p className="text-xs text-slate-400 mb-0.5">최근 급이량</p>
-                <p className="text-lg font-bold text-slate-100">
-                  {latest?.actual_amount_kg?.toFixed(2) ?? '—'}
-                  <span className="text-xs font-normal text-slate-400 ml-1">kg</span>
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-400 mb-0.5">AI 권장량</p>
-                <p className="text-lg font-bold text-amber-400">
-                  {latest?.recommended_amount_kg?.toFixed(2) ?? '—'}
-                  <span className="text-xs font-normal text-slate-400 ml-1">kg</span>
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-400 mb-0.5">사료 낭비</p>
-                <p className="text-lg font-bold text-slate-100">
-                  {latest?.feed_waste_estimate_pct?.toFixed(1) ?? '—'}
-                  <span className="text-xs font-normal text-slate-400 ml-1">%</span>
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-400 mb-0.5">트리거</p>
-                <p className="text-lg font-bold text-slate-100">
-                  {latest?.trigger_source ? TRIGGER_LABELS[latest.trigger_source] : '—'}
-                </p>
-              </div>
+              {[
+                { label: '최근 급이량',  value: latest?.actual_amount_kg?.toFixed(2),      unit: 'kg', color: 'var(--text-primary)' },
+                { label: 'AI 권장량',   value: latest?.recommended_amount_kg?.toFixed(2),  unit: 'kg', color: 'var(--warn)'         },
+                { label: '사료 낭비',   value: latest?.feed_waste_estimate_pct?.toFixed(1), unit: '%',  color: 'var(--text-primary)' },
+                { label: '트리거',      value: latest?.trigger_source ? TRIGGER_LABELS[latest.trigger_source] : null, unit: '', color: 'var(--text-primary)' },
+              ].map(({ label, value, unit, color }) => (
+                <div key={label}>
+                  <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>{label}</p>
+                  <p className="text-lg font-bold" style={{ color }}>
+                    {value ?? '—'}
+                    {value && unit && <span className="text-xs font-normal ml-0.5" style={{ color: 'var(--text-muted)' }}>{unit}</span>}
+                  </p>
+                </div>
+              ))}
             </div>
           </div>
 
           {/* Manual trigger */}
-          <div className="bg-slate-800 rounded-xl border border-slate-700 p-4 space-y-3">
-            <h2 className="text-sm font-medium text-slate-200">수동 급이</h2>
+          <div className="card space-y-3">
+            <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>수동 급이</h2>
             <div>
-              <label className="text-xs text-slate-400">급이량 (kg)</label>
+              <label className="text-xs" style={{ color: 'var(--text-secondary)' }}>급이량 (kg)</label>
               <input
-                type="number"
-                min="0.1"
-                max="10"
-                step="0.1"
+                type="number" min="0.1" max="10" step="0.1"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                className="mt-1 w-full bg-slate-700 border border-slate-600 text-slate-100 text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-amber-500"
+                className="input-base mt-1"
               />
             </div>
             <div className="flex gap-2">
               <button
                 onClick={() => triggerMut.mutate()}
                 disabled={triggerMut.isPending}
-                className="flex-1 flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-900 font-medium text-sm py-2 rounded-lg transition-colors"
+                className="btn-primary flex-1 flex items-center justify-center gap-1.5"
               >
-                <Play className="w-3.5 h-3.5" />
+                <Play size={13} />
                 {triggerMut.isPending ? '급이 중…' : '급이 시작'}
               </button>
               <button
                 onClick={() => stopMut.mutate()}
                 disabled={stopMut.isPending}
-                className="px-3 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-sm rounded-lg transition-colors disabled:opacity-50"
+                className="px-3 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
+                style={{ backgroundColor: 'rgba(220,38,38,0.1)', color: 'var(--danger)', border: '1px solid rgba(220,38,38,0.2)' }}
               >
                 정지
               </button>
             </div>
             {triggerMut.isError && (
-              <p className="text-xs text-red-400">급이 명령 실패</p>
+              <p className="text-xs" style={{ color: 'var(--danger)' }}>급이 명령 실패</p>
             )}
           </div>
         </div>
 
-        {/* Right: history table */}
-        <div className="lg:col-span-2 bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-          <div className="px-5 py-3 border-b border-slate-700 flex items-center gap-2">
-            <BarChart2 className="w-4 h-4 text-amber-400" />
-            <h2 className="text-sm font-medium text-slate-200">급이 이력 (최근 30회)</h2>
+        {/* History table */}
+        <div
+          className="lg:col-span-2 rounded-2xl overflow-hidden"
+          style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--bg-border)', boxShadow: 'var(--shadow-sm)' }}
+        >
+          <div className="px-5 py-3 flex items-center gap-2" style={{ borderBottom: '1px solid var(--bg-border)' }}>
+            <BarChart2 size={14} style={{ color: 'var(--warn)' }} />
+            <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>급이 이력 (최근 30회)</h2>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-xs text-slate-400 border-b border-slate-700">
-                  <th className="text-left px-4 py-2.5 font-medium">시각</th>
-                  <th className="text-right px-4 py-2.5 font-medium">급이량 (kg)</th>
-                  <th className="text-right px-4 py-2.5 font-medium">권장량 (kg)</th>
-                  <th className="text-right px-4 py-2.5 font-medium">활성도</th>
-                  <th className="text-right px-4 py-2.5 font-medium">낭비 (%)</th>
-                  <th className="text-center px-4 py-2.5 font-medium">트리거</th>
-                  <th className="text-center px-4 py-2.5 font-medium">완료</th>
+                <tr style={{ borderBottom: '1px solid var(--bg-border)' }}>
+                  {['시각','급이량(kg)','권장량(kg)','활성도','낭비(%)','트리거','완료'].map((h) => (
+                    <th
+                      key={h}
+                      className={`px-4 py-3 text-xs font-semibold ${h === '시각' ? 'text-left' : 'text-right last:text-center'}`}
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      {h}
+                    </th>
+                  ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700/50">
+              <tbody>
                 {records.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-10 text-slate-500">
+                    <td colSpan={7} className="text-center py-10 text-sm" style={{ color: 'var(--text-muted)' }}>
                       급이 기록 없음
                     </td>
                   </tr>
                 ) : (
                   records.map((r) => (
-                    <tr key={r.id} className="hover:bg-slate-700/30 transition-colors">
-                      <td className="px-4 py-2.5 text-slate-300">{formatDate(r.started_at)}</td>
-                      <td className="px-4 py-2.5 text-right text-slate-200">
-                        {r.actual_amount_kg?.toFixed(2) ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-right text-amber-400">
-                        {r.recommended_amount_kg?.toFixed(2) ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-right">
+                    <tr
+                      key={r.id}
+                      style={{ borderBottom: '1px solid var(--bg-border)' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-elevated)' }}
+                      onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '' }}
+                    >
+                      <td className="px-4 py-3 text-sm" style={{ color: 'var(--text-secondary)' }}>{formatDate(r.started_at)}</td>
+                      <td className="px-4 py-3 text-right text-sm" style={{ color: 'var(--text-primary)' }}>{r.actual_amount_kg?.toFixed(2) ?? '—'}</td>
+                      <td className="px-4 py-3 text-right text-sm font-medium" style={{ color: 'var(--warn)' }}>{r.recommended_amount_kg?.toFixed(2) ?? '—'}</td>
+                      <td className="px-4 py-3 text-right">
                         {r.activity_score != null ? (
-                          <span className={`text-xs px-1.5 py-0.5 rounded ${
-                            r.activity_score >= 0.7
-                              ? 'text-emerald-400 bg-emerald-400/10'
-                              : r.activity_score >= 0.4
-                              ? 'text-amber-400 bg-amber-400/10'
-                              : 'text-red-400 bg-red-400/10'
-                          }`}>
+                          <span className={r.activity_score >= 0.7 ? 'badge-ok' : r.activity_score >= 0.4 ? 'badge-warn' : 'badge-danger'}>
                             {(r.activity_score * 100).toFixed(0)}%
                           </span>
                         ) : '—'}
                       </td>
-                      <td className="px-4 py-2.5 text-right text-slate-300">
-                        {r.feed_waste_estimate_pct?.toFixed(1) ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-center">
-                        <span className={`text-xs px-1.5 py-0.5 rounded ${
-                          r.trigger_source === 'ai'
-                            ? 'text-sky-400 bg-sky-400/10'
-                            : r.trigger_source === 'schedule'
-                            ? 'text-purple-400 bg-purple-400/10'
-                            : 'text-slate-400 bg-slate-600'
-                        }`}>
+                      <td className="px-4 py-3 text-right text-sm" style={{ color: 'var(--text-primary)' }}>{r.feed_waste_estimate_pct?.toFixed(1) ?? '—'}</td>
+                      <td className="px-4 py-3 text-right">
+                        <span
+                          className={
+                            r.trigger_source === 'ai'       ? 'badge-info'
+                            : r.trigger_source === 'schedule' ? 'badge-info'
+                            : 'badge-info'
+                          }
+                        >
                           {TRIGGER_LABELS[r.trigger_source] ?? r.trigger_source}
                         </span>
                       </td>
-                      <td className="px-4 py-2.5 text-center">
+                      <td className="px-4 py-3 text-center">
                         {r.is_emergency_stopped ? (
-                          <span className="text-xs text-red-400">긴급정지</span>
+                          <span className="badge-danger">긴급정지</span>
                         ) : r.is_completed ? (
-                          <span className="text-xs text-emerald-400">완료</span>
+                          <span className="badge-ok">완료</span>
                         ) : (
-                          <span className="text-xs text-amber-400">진행 중</span>
+                          <span className="badge-warn">진행 중</span>
                         )}
                       </td>
                     </tr>
