@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, BarChart3, Droplets, Fish, Gauge, LogOut, Settings, Sliders } from 'lucide-react'
+import { Activity, AlertTriangle, BarChart3, Brain, Droplets, Fish, Gauge, LogOut, Settings, Sliders } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 
@@ -14,7 +14,7 @@ interface NavSection {
 }
 
 // Sidebar is organised by the system data-flow ordering shown on the dashboard:
-//   엣지 입력 → 운영(모니터링·제어) → AI 분석 → MLOps → 관리
+//   개요 → 실시간 운영 → AI 분석 → AI 운영(에이전트·MLOps) → 관리
 const navSections: NavSection[] = [
   {
     label: '개요',
@@ -38,9 +38,15 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    label: 'MLOps · 관리',
+    label: 'AI 운영',
     items: [
-      { to: '/mlops',    icon: Activity, label: 'MLOps · 에이전트' },
+      { to: '/agents', icon: Brain,    label: 'AI 에이전트' },
+      { to: '/mlops',  icon: Activity, label: 'MLOps · 모델' },
+    ],
+  },
+  {
+    label: '관리',
+    items: [
       { to: '/settings', icon: Settings, label: '설정' },
     ],
   },

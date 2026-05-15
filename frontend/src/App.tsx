@@ -10,6 +10,7 @@ import ControlPanel from '@/components/Control/ControlPanel'
 import GrowthPage from '@/components/Growth/GrowthPage'
 import FeedingPage from '@/components/Feeding/FeedingPage'
 import AlertsPage from '@/components/Alerts/AlertsPage'
+import AgentsPage from '@/components/Agents/AgentsPage'
 import MLOpsPage from '@/components/MLOps/MLOpsPage'
 import SettingsPage from '@/components/Settings/SettingsPage'
 import WaterQualityPage from '@/components/WaterQuality/WaterQualityPage'
@@ -35,6 +36,7 @@ function AppLayout() {
             <Route path="/growth" element={<GrowthPage />} />
             <Route path="/feeding" element={<FeedingPage />} />
             <Route path="/alerts" element={<AlertsPage />} />
+            <Route path="/agents" element={<AgentsPage />} />
             <Route path="/mlops" element={<MLOpsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route

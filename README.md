@@ -421,15 +421,16 @@ AIAquafarm_MLOps/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── Auth/           → 로그인 페이지
-│   │   │   ├── Dashboard/      → 수질·성장·급이·알림 패널 + KPI 요약
+│   │   │   ├── Dashboard/      → SystemFlowPanel(5단계 파이프라인) + KPI + 수질·성장·급이·알림 패널
 │   │   │   ├── WaterQuality/   → 수질 상세 페이지 (/water-quality)
 │   │   │   ├── Control/        → 장치 제어 패널
 │   │   │   ├── Alerts/         → 알림 목록
-│   │   │   ├── Growth/         → 성장 관리 페이지
-│   │   │   ├── Feeding/        → 먹이 관리 페이지
-│   │   │   ├── MLOps/          → MLOps 상태 페이지
+│   │   │   ├── Growth/         → 성장 분석 페이지
+│   │   │   ├── Feeding/        → 급이 분석 페이지
+│   │   │   ├── Agents/         → AI 에이전트 페이지 (/agents) — LangGraph 토폴로지·실시간 사이클
+│   │   │   ├── MLOps/          → MLOps 모델 페이지 (/mlops) — 레지스트리·드리프트·A/B·AutoML
 │   │   │   ├── Settings/       → 모델 상태·임계값 설정
-│   │   │   └── Layout/         → Header (다크모드 토글·알림 벨)·Sidebar
+│   │   │   └── Layout/         → Header (다크모드 토글·알림 벨)·Sidebar (5개 그룹)
 │   │   ├── context/
 │   │   │   └── AuthContext.tsx → httpOnly 쿠키 기반 인증 상태
 │   │   ├── hooks/
@@ -470,12 +471,39 @@ AIAquafarm_MLOps/
 
 ### 대시보드 (`/dashboard`)
 
+- **시스템 데이터 흐름 패널** (`SystemFlowPanel`): 상단에 5단계 파이프라인 시각화
+  `① 엣지 센서·카메라 → ② 백엔드 API → ③ AI 추론 모델 → ④ AI 에이전트 → ⑤ 제어·알림`
+  각 단계는 실시간 상태(녹/주황/적/회색) + 라이브 지표(수조 N/M, 모델 N/3, 활성 알림 수)를 표시하며,
+  카드를 누르면 해당 상세 페이지로 드릴다운합니다.
 - **KPI 요약 행**: 운영 중 수조 수·활성 알림 수·총 바이오매스·현재 수온/DO
 - **수질 패널**: 실시간 온도·pH·DO·탁도·암모니아·아질산 수치, AI 예측값
 - **성장 패널**: 평균 체장·체중·마리수·생체중·FCR(사료전환율) 추이
 - **급이 패널**: 최근 급이 이벤트, 권장 급이량 vs 실제 급이량
 - **알림 패널**: 활성 경보 (심각도: critical·warning·info)
 - **WebSocket 토스트**: 새 알림 수신 시 화면 우하단에 8초간 팝업
+
+### AI 에이전트 (`/agents`)
+
+LangGraph 런타임 오케스트레이션 전용 페이지. `/mlops`에서 분리되어 농장 운영자/SRE 시점의 가시성을 제공합니다.
+
+- **실시간 상태 카드**: 에이전트 온라인 여부, 최종 사이클 실행 시각, 결정/실행 건수, 비-`no_action` 조치 수, 수동 실행 버튼
+- **3-스윔레인 SCADA 토폴로지**:
+  - 좌측 **데이터 소스**: 수질 센서·성장 카메라(YOLOv8)·급이 카메라(ResNet18) 카드 — 각 메트릭이 임계값 색상(녹/주황/적)으로 표시
+  - 중앙 **관리 그래프**: `START → collect_data → analyse_situation → (needs_action) → execute_commands → generate_report → END`. 직전 사이클이 탄 분기는 보라색 실선, 미선택 분기는 점선
+  - 우측 **물리 액추에이터**: 사료공급기·순환펌프·산소공급기·환수밸브·알림시스템 — 실제 발생한 결정(`action_type`)에 매핑되는 카드만 주황색 활성
+  - `analyse_situation` 옆 **결정 규칙 패널**: NH₃/NO₂/DO/pH 임계값 5종이 항상 노출되며 현재 위반 중인 규칙은 강조됨
+- **Optimization 서브그래프**: `gather_outputs → generate_candidates(Claude) → simulate_in_twin(ODE) → select_optimal` 5단계 callout
+- **최근 사이클 트레이스**: 직전 실행의 단계별 결과 (`collect_data → analyse_situation → execute_commands → generate_report`) 와 오류 표시
+
+### MLOps · 모델 (`/mlops`)
+
+모델 자산 관리 전용 페이지. 에이전트 콘텐츠는 `/agents`로 이관되었고 상단에 cross-link 카드를 두었습니다.
+
+- Production 모델 상태 (FishDetection / FeedingActivityClassifier / WaterQualityPredictor)
+- 모델 생명주기 다이어그램 (None → Staging → Production → Archived)
+- PSI 드리프트 기준 (안정/경고/재훈련) + AutoML 6시간 주기 설명
+- A/B 테스트 (Canary 10%·해시 기반 결정적 라우팅) 사용법
+- AutoML 재훈련 임계값 표 (모델별 샘플·PSI·데이터 소스)
 
 ### 수질 모니터링 (`/water-quality`)
 
@@ -680,6 +708,7 @@ POST /api/v1/auth/login  →  httpOnly 쿠키 설정
 - [x] **Phase 5**: Kubernetes 매니페스트 (HPA·CronJob·Ingress·kustomize), GitHub Actions CI
 - [x] **QA**: Docker 전체 스택 빌드·실행 검증, make migrate·seed 통과, 보안 버그 수정
 - [x] **UI 개선**: 수질 전용 상세 페이지(`/water-quality`), 다크 모드 토글, Mock 데이터 모드, Recharts 기반 차트, Zustand 상태관리 추가
+- [x] **UI 정보구조 재편**: 대시보드 상단 `SystemFlowPanel`(엣지→백엔드→AI→에이전트→제어 5단계 파이프라인), 사이드바 5개 의미 그룹화(개요·실시간 운영·AI 분석·AI 운영·관리), `/mlops`에서 LangGraph 콘텐츠를 분리한 신규 `/agents` 페이지 — 3-스윔레인 SCADA 토폴로지(데이터 소스·에이전트 그래프·물리 액추에이터) + 결정 규칙 패널 + 사이클 트레이스
 
 ---
 

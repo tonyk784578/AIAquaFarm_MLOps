@@ -16,6 +16,8 @@ AIAquafarm은 RAS(순환여과식) 양식장을 위한 AI 통합 관리 플랫�
 **책임**:
 
 - 실시간 수질/성장/급이 모니터링 UI
+- 시스템 전체 데이터 흐름 가시화 (`SystemFlowPanel`)
+- LangGraph 에이전트 토폴로지·사이클 트레이스 시각화 (`Agents/AgentGraphVisualization`)
 - 알림 수신 및 해결 인터페이스
 - 장비 원격 제어 패널
 - WebSocket 기반 실시간 데이터 수신
@@ -24,14 +26,27 @@ AIAquafarm은 RAS(순환여과식) 양식장을 위한 AI 통합 관리 플랫�
 
 | 경로 | 컴포넌트 | 설명 |
 | ---- | -------- | ---- |
-| `/dashboard` | `Dashboard/index.tsx` | KPI 요약 + 수질·성장·급이·알림 패널 |
+| `/dashboard` | `Dashboard/index.tsx` | **SystemFlowPanel** (엣지 → 백엔드 → AI → 에이전트 → 제어 5단계 파이프라인) + KPI 요약 + 수질·성장·급이·알림 패널 |
 | `/water-quality` | `WaterQuality/WaterQualityPage.tsx` | 수질 지표 상세 + 24h 이력 차트 |
 | `/control` | `Control/ControlPanel.tsx` | 장치 원격 제어 |
-| `/growth` | `Growth/GrowthPage.tsx` | 어류 성장 추이 |
-| `/feeding` | `Feeding/FeedingPage.tsx` | 급이 이벤트 및 활성도 |
+| `/growth` | `Growth/GrowthPage.tsx` | 어류 성장 분석 |
+| `/feeding` | `Feeding/FeedingPage.tsx` | 급이 분석 (이벤트·활성도) |
 | `/alerts` | `Alerts/AlertsPage.tsx` | 알림 목록 및 해제 |
-| `/mlops` | `MLOps/MLOpsPage.tsx` | 에이전트 상태·모델 레지스트리 |
+| `/agents` | `Agents/AgentsPage.tsx` + `Agents/AgentGraphVisualization.tsx` | LangGraph 런타임 — 실시간 사이클 상태 · 3-스윔레인 SCADA 토폴로지(센서 → 그래프 노드 → 액추에이터) · optimization 서브그래프 · 사이클 트레이스 |
+| `/mlops` | `MLOps/MLOpsPage.tsx` | MLOps 모델 전용 — Production 상태·생명주기·PSI 드리프트·A/B 카나리·AutoML 임계값 (에이전트 콘텐츠는 `/agents`로 분리) |
 | `/settings` | `Settings/SettingsPage.tsx` | 임계값·모델 상태 설정 |
+
+**사이드바 그룹**:
+
+사이드바([`Layout/Sidebar.tsx`](../frontend/src/components/Layout/Sidebar.tsx))는 5개 의미 단위로 묶여 있으며 대시보드 SystemFlowPanel의 데이터 흐름 순서와 일치합니다.
+
+| 그룹 | 메뉴 |
+| ---- | ---- |
+| `개요` | 대시보드 |
+| `실시간 운영` | 수질 모니터링 · 제어 패널 · 알림 |
+| `AI 분석` | 성장 분석 · 급이 분석 |
+| `AI 운영` | AI 에이전트 · MLOps · 모델 |
+| `관리` | 설정 |
 
 **다크 모드**:
 

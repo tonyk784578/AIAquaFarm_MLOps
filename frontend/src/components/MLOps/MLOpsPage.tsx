@@ -1,11 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, Box, Brain, CheckCircle, RefreshCw, XCircle, Zap } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
+import { Activity, Box, Brain, CheckCircle, RefreshCw, XCircle } from 'lucide-react'
 import {
   getFeedingModelStatus, getGrowthModelStatus, getWaterQualityModelStatus,
-  getAgentCycleStatus, getAgentHealth, triggerAgentCycle,
 } from '@/services/api'
-import type { AgentCycleStatus, ModelStatus } from '@/types'
-import AgentGraphVisualization from './AgentGraphVisualization'
+import type { ModelStatus } from '@/types'
 
 const MODEL_INFO = [
   { key: 'growth',  label: 'FishDetection',              desc: 'YOLOv8 어류 탐지 모델',       accentColor: 'var(--ok)',   fetchFn: getGrowthModelStatus  },
@@ -105,132 +104,6 @@ function LifecycleStep({ label, active, done }: { label: string; active?: boolea
   )
 }
 
-function AgentPanel() {
-  const qc = useQueryClient()
-
-  const { data: health } = useQuery({
-    queryKey: ['agent-health'],
-    queryFn: getAgentHealth,
-    refetchInterval: 30_000,
-    retry: false,
-  })
-
-  const { data: status, isLoading: statusLoading } = useQuery<AgentCycleStatus>({
-    queryKey: ['agent-cycle-status'],
-    queryFn: getAgentCycleStatus,
-    refetchInterval: 15_000,
-    retry: false,
-  })
-
-  const { mutate: runCycle, isPending: running } = useMutation({
-    mutationFn: triggerAgentCycle,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['agent-cycle-status'] })
-      qc.invalidateQueries({ queryKey: ['dashboard-summary'] })
-    },
-  })
-
-  const agentOnline    = !!health
-  const graphAvailable = health?.management_graph ?? false
-  const lastRanAt      = status?.ran_at ? new Date(status.ran_at).toLocaleString('ko-KR') : '—'
-  const decisionCount  = status?.decisions?.length ?? 0
-  const executedCount  = status?.executed?.length  ?? 0
-  const nonTrivial     = status?.decisions?.filter((d) => d.action_type !== 'no_action') ?? []
-
-  return (
-    <div className="card space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Brain size={15} style={{ color: '#8B5CF6' }} />
-          <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>관리 에이전트</h3>
-          <span
-            className="text-xs px-2 py-0.5 rounded-full font-semibold"
-            style={
-              agentOnline
-                ? { backgroundColor: 'rgba(5,150,105,0.1)', color: 'var(--ok)' }
-                : { backgroundColor: 'var(--bg-elevated)',   color: 'var(--text-muted)' }
-            }
-          >
-            {agentOnline ? '온라인' : '오프라인'}
-          </span>
-          {agentOnline && !graphAvailable && (
-            <span className="text-xs" style={{ color: 'var(--warn)' }}>(LangGraph 미설치)</span>
-          )}
-        </div>
-        <button
-          onClick={() => runCycle()}
-          disabled={running || !agentOnline}
-          className="btn-primary flex items-center gap-1.5 text-xs"
-          style={{ padding: '6px 12px' }}
-        >
-          {running ? <RefreshCw size={12} className="animate-spin" /> : <Zap size={12} />}
-          {running ? '실행 중…' : '수동 실행'}
-        </button>
-      </div>
-
-      {statusLoading ? (
-        <p className="text-xs animate-pulse" style={{ color: 'var(--text-muted)' }}>상태 로딩 중…</p>
-      ) : status && !('status' in status && status.status === 'no_cycle_run_yet') ? (
-        <div className="space-y-3">
-          <div className="grid grid-cols-3 gap-3 text-center">
-            {[
-              { label: '최종 실행',   value: lastRanAt,   big: false },
-              { label: '결정 / 실행', value: `${decisionCount} / ${executedCount}`, big: true },
-              { label: '조치 건수',   value: String(nonTrivial.length), big: true, highlight: nonTrivial.length > 0 },
-            ].map(({ label, value, big, highlight }) => (
-              <div key={label} className="rounded-xl p-3" style={{ backgroundColor: 'var(--bg-elevated)' }}>
-                <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>{label}</p>
-                <p
-                  className={`${big ? 'text-sm font-bold' : 'text-xs font-medium'} mt-0.5`}
-                  style={{ color: highlight ? 'var(--warn)' : big ? 'var(--text-primary)' : 'var(--text-secondary)' }}
-                >
-                  {value}
-                </p>
-              </div>
-            ))}
-          </div>
-
-          {status.final_report && (
-            <div className="rounded-xl p-3" style={{ backgroundColor: 'var(--bg-elevated)' }}>
-              <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>최종 보고서</p>
-              <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{status.final_report}</p>
-            </div>
-          )}
-
-          {nonTrivial.length > 0 && (
-            <div className="space-y-1.5">
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>실행된 조치</p>
-              {nonTrivial.map((d, i) => (
-                <div
-                  key={i}
-                  className="flex items-start gap-2 rounded-xl px-3 py-2"
-                  style={{ backgroundColor: 'var(--bg-elevated)' }}
-                >
-                  <span className="text-xs font-mono font-semibold shrink-0" style={{ color: '#8B5CF6' }}>{d.action_type}</span>
-                  <span className="text-xs line-clamp-1" style={{ color: 'var(--text-secondary)' }}>{d.reasoning}</span>
-                  <span className="text-xs shrink-0 ml-auto" style={{ color: 'var(--text-muted)' }}>
-                    {(d.confidence * 100).toFixed(0)}%
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {status.error && (
-            <p className="text-xs rounded-xl px-3 py-2" style={{ color: 'var(--danger)', backgroundColor: 'rgba(220,38,38,0.08)' }}>
-              오류: {status.error}
-            </p>
-          )}
-        </div>
-      ) : (
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-          아직 실행된 사이클이 없습니다. 수동 실행 버튼을 눌러 시작하세요.
-        </p>
-      )}
-    </div>
-  )
-}
-
 export default function MLOpsPage() {
   return (
     <div className="space-y-6">
@@ -247,16 +120,24 @@ export default function MLOpsPage() {
         </div>
       </section>
 
-      {/* Agent panel */}
+      {/* Cross-link to the dedicated Agents page */}
       <section>
-        <p className="section-title">AI 에이전트 (LangGraph)</p>
-        <AgentPanel />
-      </section>
-
-      {/* Agent graph topology */}
-      <section>
-        <p className="section-title">에이전트 그래프 토폴로지</p>
-        <AgentGraphVisualization />
+        <Link
+          to="/agents"
+          className="card flex items-center gap-3 transition-colors group"
+          style={{ borderLeft: '3px solid #8B5CF6' }}
+        >
+          <Brain size={18} style={{ color: '#8B5CF6' }} className="shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              AI 에이전트 (LangGraph) 페이지로 이동
+            </p>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              실시간 사이클 상태, 그래프 토폴로지, 의사결정 트레이스는 별도 페이지에서 확인합니다.
+            </p>
+          </div>
+          <RefreshCw size={14} style={{ color: 'var(--text-muted)' }} className="shrink-0 group-hover:rotate-90 transition-transform" />
+        </Link>
       </section>
 
       {/* Lifecycle */}

@@ -246,7 +246,7 @@ export default function SystemFlowPanel({ activeAlertCount }: SystemFlowPanelPro
           metric={!agentHealth ? '오프라인' : `${executedCount}`}
           metricLabel={!agentHealth ? '' : '직전 사이클 조치'}
           status={agentStatus}
-          to="/mlops"
+          to="/agents"
         />
         <FlowArrow />
         <Stage
