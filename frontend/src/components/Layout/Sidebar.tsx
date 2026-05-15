@@ -2,15 +2,48 @@ import { Activity, AlertTriangle, BarChart3, Droplets, Fish, Gauge, LogOut, Sett
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 
-const navItems = [
-  { to: '/dashboard',     icon: Gauge,         label: '대시보드' },
-  { to: '/water-quality', icon: Droplets,      label: '수질 모니터링' },
-  { to: '/control',       icon: Sliders,       label: '제어 패널' },
-  { to: '/growth',        icon: Fish,          label: '성장 관리' },
-  { to: '/feeding',       icon: BarChart3,     label: '먹이 관리' },
-  { to: '/alerts',        icon: AlertTriangle, label: '알림' },
-  { to: '/mlops',         icon: Activity,      label: 'MLOps' },
-  { to: '/settings',      icon: Settings,      label: '설정' },
+interface NavItem {
+  to: string
+  icon: typeof Gauge
+  label: string
+}
+
+interface NavSection {
+  label: string
+  items: NavItem[]
+}
+
+// Sidebar is organised by the system data-flow ordering shown on the dashboard:
+//   엣지 입력 → 운영(모니터링·제어) → AI 분석 → MLOps → 관리
+const navSections: NavSection[] = [
+  {
+    label: '개요',
+    items: [
+      { to: '/dashboard', icon: Gauge, label: '대시보드' },
+    ],
+  },
+  {
+    label: '실시간 운영',
+    items: [
+      { to: '/water-quality', icon: Droplets,      label: '수질 모니터링' },
+      { to: '/control',       icon: Sliders,       label: '제어 패널' },
+      { to: '/alerts',        icon: AlertTriangle, label: '알림' },
+    ],
+  },
+  {
+    label: 'AI 분석',
+    items: [
+      { to: '/growth',  icon: Fish,      label: '성장 분석' },
+      { to: '/feeding', icon: BarChart3, label: '급이 분석' },
+    ],
+  },
+  {
+    label: 'MLOps · 관리',
+    items: [
+      { to: '/mlops',    icon: Activity, label: 'MLOps · 에이전트' },
+      { to: '/settings', icon: Settings, label: '설정' },
+    ],
+  },
 ]
 
 export default function Sidebar() {
@@ -50,16 +83,28 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto">
-        {navItems.map(({ to, icon: Icon, label }) => (
-          <NavLink
-            key={to}
-            to={to}
-            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-          >
-            <Icon size={15} className="shrink-0" />
-            {label}
-          </NavLink>
+      <nav className="flex-1 py-3 px-2 overflow-y-auto">
+        {navSections.map((section, idx) => (
+          <div key={section.label} className={idx === 0 ? '' : 'mt-4'}>
+            <p
+              className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              {section.label}
+            </p>
+            <div className="space-y-0.5">
+              {section.items.map(({ to, icon: Icon, label }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                >
+                  <Icon size={15} className="shrink-0" />
+                  {label}
+                </NavLink>
+              ))}
+            </div>
+          </div>
         ))}
       </nav>
 

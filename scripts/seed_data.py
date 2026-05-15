@@ -1,112 +1,169 @@
 """Seed test data into the AIAquafarm database.
 
-Generates realistic synthetic sensor readings, fish growth records,
-feeding events, and sample alerts for development and demo purposes.
-
+SQLAlchemy 직접 삽입 방식 — HTTP API 미사용.
 Usage:
-    python scripts/seed_data.py
-    # or
     make seed
+    또는: docker compose exec backend python scripts/seed_data.py
 """
 
 import asyncio
 import random
-from datetime import datetime, timedelta, timezone
+import sys
+from datetime import datetime, timedelta
 
-import httpx
+from sqlalchemy import select
 
-BASE_URL = "http://localhost:8000"
-TANK_IDS = ["TANK-01", "TANK-02", "TANK-03"]  # must match DEFAULT_TANK_IDS in .env
-DAYS_OF_HISTORY = 7
+sys.path.insert(0, "/app")
 
+from app.db.session import AsyncSessionLocal
+from app.models.alert import Alert
+from app.models.feeding import FeedingRecord
+from app.models.fish_growth import FishGrowthRecord
+from app.models.water_quality import WaterQualityReading
 
-def random_water_quality(tank_id: str, timestamp: datetime) -> dict:
-    """Generate a realistic water quality reading."""
-    return {
-        "tank_id": tank_id,
-        "measured_at": timestamp.isoformat(),
-        "temperature_c": round(22.5 + random.gauss(0, 0.5), 2),
-        "ph": round(7.2 + random.gauss(0, 0.1), 2),
-        "dissolved_oxygen_mgl": round(7.8 + random.gauss(0, 0.3), 2),
-        "turbidity_ntu": round(max(0.1, 1.5 + random.gauss(0, 0.2)), 2),
-        "ammonia_ppm": round(max(0, random.gauss(0.15, 0.05)), 3),
-        "nitrite_ppm": round(max(0, random.gauss(0.03, 0.01)), 3),
-        "source": "sensor",
-        "ammonia_confidence": 0.85,
-        "nitrite_confidence": 0.80,
-    }
+TANK_IDS = ["TANK-01", "TANK-02", "TANK-03"]
+DAYS = 7
 
 
-def random_fish_growth(tank_id: str, timestamp: datetime, day: int) -> dict:
-    """Generate realistic fish growth record (growth trend over days)."""
-    base_weight = 150.0 + day * 2.5  # ~2.5g/day growth
-    return {
-        "tank_id": tank_id,
-        "measured_at": timestamp.isoformat(),
-        "avg_length_cm": round(18.0 + day * 0.1 + random.gauss(0, 0.2), 2),
-        "avg_weight_g": round(base_weight + random.gauss(0, 3), 1),
-        "fish_count": random.randint(480, 500),
-        "biomass_kg": round((base_weight * 490) / 1000, 2),
-        "daily_growth_rate_pct": round(random.gauss(1.5, 0.2), 2),
-        "feed_conversion_ratio": round(random.gauss(1.2, 0.1), 2),
-        "model_version": "stub-v0.1",
-        "inference_confidence": 0.92,
-        "frame_count_analyzed": random.randint(50, 100),
-    }
+def _ts(days_ago: float = 0) -> datetime:
+    """UTC naive datetime (TIMESTAMP WITHOUT TIME ZONE 호환)."""
+    return datetime.utcnow() - timedelta(days=days_ago)
+
+
+def make_wq(tank_id: str, ts: datetime) -> WaterQualityReading:
+    return WaterQualityReading(
+        tank_id=tank_id,
+        measured_at=ts,
+        temperature_c=round(22.5 + random.gauss(0, 0.5), 2),
+        ph=round(7.2 + random.gauss(0, 0.1), 2),
+        dissolved_oxygen_mgl=round(7.8 + random.gauss(0, 0.3), 2),
+        turbidity_ntu=round(max(0.1, 1.5 + random.gauss(0, 0.2)), 2),
+        ammonia_ppm=round(max(0.0, random.gauss(0.15, 0.05)), 3),
+        nitrite_ppm=round(max(0.0, random.gauss(0.03, 0.01)), 3),
+        ammonia_confidence=round(random.uniform(0.80, 0.95), 2),
+        nitrite_confidence=round(random.uniform(0.78, 0.92), 2),
+        source="sensor",
+    )
+
+
+def make_growth(tank_id: str, ts: datetime, day_idx: int) -> FishGrowthRecord:
+    base_w = 150.0 + day_idx * 2.5
+    return FishGrowthRecord(
+        tank_id=tank_id,
+        measured_at=ts,
+        avg_length_cm=round(18.0 + day_idx * 0.1 + random.gauss(0, 0.2), 2),
+        avg_weight_g=round(base_w + random.gauss(0, 3), 1),
+        fish_count=random.randint(480, 500),
+        biomass_kg=round((base_w * 490) / 1000, 2),
+        daily_growth_rate_pct=round(random.gauss(1.5, 0.2), 2),
+        feed_conversion_ratio=round(random.gauss(1.2, 0.1), 2),
+        model_version="stub-v0.1",
+        inference_confidence=0.92,
+        frame_count_analyzed=random.randint(50, 100),
+    )
+
+
+def make_feeding(tank_id: str, ts: datetime) -> FeedingRecord:
+    recommended = round(random.uniform(2.5, 3.2), 2)
+    return FeedingRecord(
+        tank_id=tank_id,
+        started_at=ts,
+        ended_at=ts + timedelta(seconds=75),
+        commanded_amount_kg=recommended,
+        actual_amount_kg=round(recommended * random.uniform(0.9, 1.1), 2),
+        duration_seconds=75,
+        activity_score=round(random.uniform(0.6, 0.95), 3),
+        recommended_amount_kg=recommended,
+        feed_waste_estimate_pct=round(random.uniform(3.0, 12.0), 1),
+        trigger_source=random.choice(["ai", "schedule"]),
+        is_completed=True,
+        is_emergency_stopped=False,
+    )
+
+
+def make_alerts() -> list[Alert]:
+    now = datetime.utcnow()
+    return [
+        Alert(
+            tank_id="TANK-01",
+            created_at=now - timedelta(minutes=22),
+            severity="critical",
+            category="water_quality",
+            title="암모니아 위험 수준 초과",
+            message="TANK-01 암모니아 농도 0.82 ppm — 위험 임계값(0.8 ppm) 초과.",
+            metric_name="ammonia_ppm",
+            metric_value="0.82",
+            threshold_value="0.80",
+            source="virtual_sensor",
+            is_active=True,
+        ),
+        Alert(
+            tank_id="TANK-02",
+            created_at=now - timedelta(hours=1, minutes=31),
+            severity="critical",
+            category="water_quality",
+            title="용존산소 위험 수준",
+            message="TANK-02 용존산소 5.9 mg/L — 위험 임계값(6.0 mg/L) 미만.",
+            metric_name="dissolved_oxygen_mgl",
+            metric_value="5.9",
+            threshold_value="6.0",
+            source="virtual_sensor",
+            is_active=True,
+        ),
+        Alert(
+            tank_id="TANK-03",
+            created_at=now - timedelta(hours=3),
+            resolved_at=now - timedelta(hours=2),
+            severity="warning",
+            category="feeding",
+            title="급이량 과다 감지",
+            message="TANK-03 실제 급이량(3.52 kg)이 권장량(3.10 kg) 대비 113% 수준.",
+            metric_name="actual_amount_kg",
+            metric_value="3.52",
+            threshold_value="3.10",
+            source="ai",
+            is_active=False,
+        ),
+    ]
 
 
 async def seed() -> None:
-    """Run the full seeding pipeline."""
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as client:
-        # Health check
-        resp = await client.get("/health")
-        if resp.status_code != 200:
-            print(f"Backend not healthy: {resp.status_code}")
+    async with AsyncSessionLocal() as db:
+        # 기존 데이터 확인
+        existing = (await db.execute(select(WaterQualityReading).limit(1))).scalar_one_or_none()
+        if existing:
+            print("이미 데이터가 존재합니다. 덮어쓰려면 DB를 초기화한 후 다시 실행하세요.")
             return
-        print("Backend healthy — starting seed...")
 
-        now = datetime.now(tz=timezone.utc)
+        print("더미 데이터 삽입 중...")
         total = 0
 
-        for day in range(DAYS_OF_HISTORY, 0, -1):
-            for hour in range(0, 24, 1):  # Hourly readings
-                ts = now - timedelta(days=day, hours=hour)
+        for day in range(DAYS, 0, -1):
+            day_idx = DAYS - day
+            for hour in range(0, 24):
+                ts = _ts(days_ago=day - hour / 24)
                 for tank_id in TANK_IDS:
-                    # Water quality
-                    wq = random_water_quality(tank_id, ts)
-                    try:
-                        await client.post("/api/v1/monitoring/water-quality", json=wq)
-                        total += 1
-                    except Exception as e:
-                        print(f"  WQ write failed: {e}")
+                    # 수질 (매 시간)
+                    db.add(make_wq(tank_id, ts))
+                    total += 1
 
-                    # Fish growth (once per day at noon)
+                    # 성장 (하루 1회, 정오)
                     if hour == 12:
-                        fg = random_fish_growth(tank_id, ts, DAYS_OF_HISTORY - day)
-                        try:
-                            await client.post("/api/v1/monitoring/fish-growth", json=fg)
-                            total += 1
-                        except Exception as e:
-                            print(f"  Growth write failed: {e}")
+                        db.add(make_growth(tank_id, ts, day_idx))
+                        total += 1
 
-        # Seed a sample alert
-        alert = {
-            "tank_id": "TANK-01",
-            "severity": "warning",
-            "category": "water_quality",
-            "title": "암모니아 경고 수준 감지",
-            "message": "T001 수조 암모니아 농도가 0.45 ppm으로 경고 임계값 0.5 ppm에 근접했습니다.",
-            "metric_name": "ammonia_ppm",
-            "metric_value": "0.45",
-            "threshold_value": "0.5",
-            "source": "virtual_sensor",
-        }
-        try:
-            await client.post("/api/v1/alerts/", json=alert)
-        except Exception as e:
-            print(f"  Alert seed failed: {e}")
+                    # 급이 (하루 2회, 08:00 / 18:00)
+                    if hour in (8, 18):
+                        db.add(make_feeding(tank_id, ts))
+                        total += 1
 
-        print(f"Seeding complete — {total} records written.")
+        # 알림
+        for alert in make_alerts():
+            db.add(alert)
+            total += 1
+
+        await db.commit()
+        print(f"완료 — {total}건 삽입")
 
 
 if __name__ == "__main__":

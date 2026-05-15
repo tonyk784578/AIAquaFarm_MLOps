@@ -5,6 +5,7 @@ import {
   getAgentCycleStatus, getAgentHealth, triggerAgentCycle,
 } from '@/services/api'
 import type { AgentCycleStatus, ModelStatus } from '@/types'
+import AgentGraphVisualization from './AgentGraphVisualization'
 
 const MODEL_INFO = [
   { key: 'growth',  label: 'FishDetection',              desc: 'YOLOv8 어류 탐지 모델',       accentColor: 'var(--ok)',   fetchFn: getGrowthModelStatus  },
@@ -250,6 +251,12 @@ export default function MLOpsPage() {
       <section>
         <p className="section-title">AI 에이전트 (LangGraph)</p>
         <AgentPanel />
+      </section>
+
+      {/* Agent graph topology */}
+      <section>
+        <p className="section-title">에이전트 그래프 토폴로지</p>
+        <AgentGraphVisualization />
       </section>
 
       {/* Lifecycle */}

@@ -8,6 +8,7 @@ import type { Alert, DashboardSummary, Tank, WSMessage } from '@/types'
 import AlertPanel from './AlertPanel'
 import FeedingPanel from './FeedingPanel'
 import FishGrowthPanel from './FishGrowthPanel'
+import SystemFlowPanel from './SystemFlowPanel'
 import WaterQualityPanel from './WaterQualityPanel'
 
 // ── Alert Toast ───────────────────────────────────────────────────────────────
@@ -238,6 +239,9 @@ export default function Dashboard() {
             ))}
           </div>
         </div>
+
+        {/* System data-flow pipeline */}
+        <SystemFlowPanel activeAlertCount={summary?.active_alert_count ?? 0} />
 
         {/* KPI summary row */}
         <SummaryKpiRow summary={summary} tanks={tanks} />
