@@ -5,6 +5,14 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [react()],
+  // ES2022 enables top-level await (used in main.tsx for the optional mock loader)
+  // and matches the modern browser baseline.
+  build: {
+    target: 'es2022',
+  },
+  esbuild: {
+    target: 'es2022',
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
