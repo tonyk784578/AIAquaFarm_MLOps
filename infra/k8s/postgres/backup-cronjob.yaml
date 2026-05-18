@@ -1,0 +1,110 @@
+# Postgres + MLflow backup CronJob.
+#
+# Runs nightly at 03:00 UTC, takes `pg_dump --format=custom` of both databases
+# (aquafarm + aquafarm_mlflow) and uploads them to the S3-compatible data lake.
+#
+# Restore (manual):
+#   1. `aws --endpoint-url ... s3 cp s3://.../aquafarm-2026-05-17.dump /tmp/`
+#   2. `pg_restore --clean --if-exists -d aquafarm /tmp/aquafarm-2026-05-17.dump`
+#
+# Retention: the S3 bucket lifecycle policy is responsible for deleting backups
+# older than the desired horizon (e.g. 7 days). The CronJob keeps no local state.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: aquafarm
+  labels:
+    app: postgres-backup
+    component: data-resilience
+spec:
+  schedule: "0 3 * * *"           # daily at 03:00 UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600  # 1-hour hard timeout
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: bitnami/postgresql:15
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: PGHOST
+                  value: postgres
+                - name: PGPORT
+                  value: "5432"
+                - name: PGUSER
+                  valueFrom:
+                    configMapKeyRef:
+                      name: aquafarm-config
+                      key: POSTGRES_USER
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: aquafarm-secrets
+                      key: POSTGRES_PASSWORD
+                - name: APP_DB
+                  valueFrom:
+                    configMapKeyRef:
+                      name: aquafarm-config
+                      key: POSTGRES_DB
+                - name: S3_ENDPOINT_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: aquafarm-secrets
+                      key: S3_ENDPOINT_URL
+                - name: S3_BUCKET_NAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: aquafarm-secrets
+                      key: S3_BUCKET_NAME
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: aquafarm-secrets
+                      key: S3_ACCESS_KEY
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: aquafarm-secrets
+                      key: S3_SECRET_KEY
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -euo pipefail
+                  TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+                  WORKDIR=$(mktemp -d)
+                  trap 'rm -rf "$WORKDIR"' EXIT
+
+                  echo "[backup] installing awscli"
+                  apt-get update -qq && apt-get install -y -qq --no-install-recommends awscli >/dev/null
+
+                  for DB in "$APP_DB" "${APP_DB}_mlflow"; do
+                    OUT="$WORKDIR/${DB}-${TS}.dump"
+                    echo "[backup] dumping $DB → $OUT"
+                    pg_dump --format=custom --no-owner --no-privileges \
+                      --dbname="postgresql://$PGUSER:$PGPASSWORD@$PGHOST:$PGPORT/$DB" \
+                      --file="$OUT"
+                    SIZE_MB=$(du -m "$OUT" | cut -f1)
+                    echo "[backup] $DB dump size=${SIZE_MB}MiB"
+
+                    KEY="backups/postgres/${DB}/${TS}.dump"
+                    echo "[backup] uploading to s3://$S3_BUCKET_NAME/$KEY"
+                    aws --endpoint-url "$S3_ENDPOINT_URL" \
+                      s3 cp "$OUT" "s3://$S3_BUCKET_NAME/$KEY"
+                  done
+
+                  echo "[backup] OK"
+              resources:
+                requests:
+                  memory: "256Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "1Gi"
+                  cpu: "1000m"

@@ -138,13 +138,14 @@ WS   /api/v1/ws/monitoring/{tank_id}
 
 ### Layer 3 — 통합 관리 에이전트 (LangGraph)
 
-**기술**: LangGraph + LangChain + Anthropic Claude (claude-sonnet-4-6)
+**기술**: LangGraph + LangChain + Anthropic Claude (claude-sonnet-4-6) + tenacity 재시도 + Redis 영속화
 
 **책임**:
 
 - 하위 최적화 에이전트 조율
 - 농장 전체 의사결정 워크플로우
 - 자연어 설명 보고서 생성
+- 사이클 상태 영속화 + 라이브 이벤트 송출
 
 **그래프 노드**:
 
@@ -153,7 +154,21 @@ collect_data → analyse_situation → [anomaly?] → execute_commands
                                   → [normal]  → generate_report
 ```
 
-**백엔드 인증**: 모든 httpx 요청에 `X-Service-Key: {backend_api_key}` 헤더 자동 주입 (`_svc_headers()` / `_service_headers()` 헬퍼).
+**런타임 계층** (`agents/runtime/`):
+
+- `AgentHTTPClient` — `httpx.AsyncClient` 래퍼. `X-Service-Key` 헤더 자동 주입, 5/10/10/5초 타임아웃, 5xx/429/connect 오류 시 `@retry_http` 데코레이터(3회, 지수 0.5→4s 백오프)로 재시도.
+- `LLMClient` — `anthropic.AsyncAnthropic` 래퍼. `@retry_llm` 데코레이터(4회, 랜덤 지수 1→20s 백오프). 60초 기본 타임아웃.
+- `StateStore` — Redis 키 `agents:last:management`, `agents:last:optimization:{tank}`, `agents:history:*`. 50개 capped LIST. Redis 다운 시 자동으로 `_InMemoryStateStore` 폴백.
+- `EventBus` — Redis pub/sub 채널 `agents:events`. 11종 이벤트 타입 (`cycle_started`, `node_started`, `decision_made`, `command_executed`, `optimization_completed`, `error` 등). `bus.timed_node()` 컨텍스트로 자동 시작/완료 + `duration_ms` 측정.
+- `require_service_key` — `/run`, `/optimize` 에 적용된 `X-Service-Key` 의존성.
+
+**다중 탱크 스케줄러**: `main.py::_scheduler()` 가 `settings.default_tank_ids` (기본 `TANK-01,TANK-02,TANK-03`) 를 매 `cycle_interval_seconds` (기본 300초) 마다 순회.
+
+**SSE 엔드포인트**: `GET /events/stream` (sse-starlette) — `agents:events` 채널 구독을 `event: agent\ndata: <json>` 으로 변환. `event: ping` keepalive 포함.
+
+**이력 엔드포인트**: `GET /history?n=20`, `GET /history/optimization?n=20` — `StateStore` 에서 직접 조회.
+
+**백엔드 인증**: `AgentHTTPClient` 가 모든 outbound 요청에 `X-Service-Key` 헤더 자동 주입.
 
 ---
 
@@ -220,12 +235,38 @@ Edge Device
 - `FeedingActivityClassifier` — 급이 활성도 분류
 - `WaterQualityPredictor` — 수질 예측 LSTM
 
-**MLOps 자동화 기능**:
+**MLOps 라이브러리**:
 
-- **AutoML** (`mlops/training/automl.py`): 신규 샘플 수 임계값 도달 시 자동 재훈련 + QualityGate 평가
+- **AutoML** (`mlops/training/automl.py`): 신규 샘플 수 임계값 도달 시 자동 재훈련 + QualityGate 평가, PSI ≥ 0.20 시 긴급 트리거
 - **드리프트 감지** (`mlops/evaluation/drift_detector.py`): PSI + KL-divergence 기반 데이터 드리프트 감지
 - **A/B 테스트** (`mlops/registry/mlflow_registry.py`): Canary 프로모션 + 요청별 모델 선택
 - **엣지 배포** (`mlops/deployment/edge_deployer.py`): ONNX export + SCP/SSH OTA 배포
+
+**MLOps 런타임 서비스**:
+
+- **`mlops_scheduler`** (상시 컨테이너, HTTP 없음): `OrchestratorScheduler` 가 AutoML 60분 + Drift 15분 사이클을 `schedule` 라이브러리로 실행. 각 사이클은 JSONL 감사 로그(`/data/audit/automl.jsonl`)에 이벤트 기록. 8 MiB 초과 시 자동 로테이션.
+- **`mlops_api`** (FastAPI :8002): 조회 엔드포인트 `/health`, `/registry`, `/audit`, `/drift` + 관리자 엔드포인트 `/retrain`, `/promote`, `/deploy` (`X-Service-Key` 필수). MLflow 호출은 모두 `CircuitBreaker` (3-상태, 5회 실패 OPEN, 30초 후 HALF_OPEN) + `ResponseCache` (30초 TTL, `get_stale()` 무제한 폴백) 를 통과.
+- **백엔드 프록시** (`backend/app/api/v1/mlops.py`): 브라우저 → 백엔드 (쿠키 인증) → `mlops_api` (`X-Service-Key` 자동 주입). 읽기는 그대로 포워딩, 쓰기는 `require_superuser` 게이팅.
+
+**감사 로그 이벤트 타입**: `automl`, `drift`, `promotion`, `rollback`, `deployment`, `training`, `error` — `mlops/orchestrator/audit_log.py::EventKind` 에 정의.
+
+---
+
+### Layer 7 — 관측성 (선택적)
+
+`docker-compose.observability.yml` 로 동시 기동 가능한 옵션 스택.
+
+**구성요소**:
+
+- **Prometheus** (:9090) — backend / agents / mlops_api 각 서비스의 `/metrics` 엔드포인트를 15초 주기로 스크랩. 잡 라벨로 서비스 구분.
+- **Grafana** (:3001) — 대시보드 (기본 admin/admin).
+- **OpenTelemetry Collector** (:4317 gRPC, :4318 HTTP) — OTLP 트레이스 수집. `OTEL_EXPORTER_OTLP_ENDPOINT` 환경변수가 설정된 서비스만 송신 (no-op 폴백).
+
+**구현**:
+
+- 각 서비스의 `observability.py` 모듈이 `setup_observability(app, service_name)` 함수를 노출 — `prometheus-fastapi-instrumentator` (메트릭) + OpenTelemetry SDK (트레이스) 를 한 번에 활성화.
+- 자동 instrumentation: FastAPI, httpx (3 서비스 공통), SQLAlchemy + Redis (backend / agents), Requests (mlops_api → MLflow).
+- Resource attributes: `service.name`, `service.version`, `deployment.environment` 자동 첨부.
 
 ---
 
@@ -291,14 +332,17 @@ ManagementAgent.run()
 |------|-----------|
 | 토큰 저장 | httpOnly 쿠키 (`aq_access` path=`/`, `aq_refresh` path=`/api/v1/auth`) |
 | JWT | HS256, `iat`+`exp`+`type` 클레임, 액세스/리프레시 별도 시크릿 |
-| Rate Limiting | `POST /auth/login` IP당 10회/분 (slowapi) |
+| Rate Limiting | `POST /auth/login` 10/분, `/control/*` 60/분 (내부 서비스 면제), `/alerts/` 30/분 (내부 서비스 면제), `/mlops/{retrain,promote,deploy}` 10/분 (면제 없음). `is_internal_service(request)` 헬퍼가 `X-Service-Key` 일치 시 슬로어피 우회 (`app/core/limiter.py`) |
 | RBAC | router-level `Depends()` — superuser / user / service 분리 |
-| 서비스 인증 | `X-Service-Key` 헤더 (에이전트 → 백엔드) |
+| 서비스 인증 | `X-Service-Key` 헤더 (에이전트 → 백엔드, 백엔드 → mlops_api). 양방향 모두 같은 `INTERNAL_API_KEY` 사용 |
 | 등록 제어 | `REGISTRATION_OPEN=false` 기본값 |
 | 입력 검증 | `tank_id` 패턴 `^[A-Z0-9][A-Z0-9_\-]*$` (REST `Path()` + WebSocket 런타임 검증), SQL 완전 파라미터화 |
-| CORS | 명시적 origin 목록, `allow_credentials=True` |
+| 요청 본문 한도 | 1 MiB (백엔드 `MAX_REQUEST_BYTES`, agents/mlops_api 동일). 초과 시 413. Fast path (Content-Length) + streaming fallback. |
+| 보안 헤더 | Nginx: HSTS · CSP · X-Frame-Options DENY · Referrer-Policy · Permissions-Policy. FastAPI 미들웨어가 동일 헤더를 직접 응답에 추가 (gateway 우회 시에도 보호). |
+| CORS — backend | `CORS_ORIGINS` 명시적 origin 목록, `allow_credentials=True` |
+| CORS — mlops_api | `MLOPS_CORS_ORIGINS` 기본 빈 값 → 브라우저 직접 호출 차단. 백엔드 프록시만 정당한 경로 |
 | 쿠키 | 프로덕션에서 `Secure=true`, `SameSite=Lax` |
-| 시크릿 관리 | 환경변수 전용, K8s Secrets로 주입 (하드코딩 금지) |
+| 시크릿 관리 | 환경변수 + K8s Secrets. 프로덕션은 sealed-secrets 또는 SOPS+age 워크플로 (`infra/k8s/secrets/README.md`). `.gitleaks.toml` 으로 CI 시크릿 스캔 |
 
 ---
 
@@ -307,5 +351,25 @@ ManagementAgent.run()
 - TimescaleDB hypertable을 통한 시계열 데이터 수평 확장
 - FastAPI async/await 비동기 처리
 - MLflow를 통한 모델 버전 관리 및 무중단 배포
-- Docker Compose (개발) → Kubernetes kustomize (운영) — `infra/k8s/`에 HPA, CronJob, Ingress 포함
-- GitHub Actions CI: lint → test (PostgreSQL+Redis 서비스 컨테이너) → docker build (PR 전용)
+- Docker Compose (개발) → Kubernetes kustomize (운영) — `infra/k8s/`에 HPA, CronJob (AutoML + Postgres 백업), Deployment (mlops_scheduler, mlops_api), Ingress 포함
+- GitHub Actions CI: lint → gitleaks 시크릿 스캔 → test (backend / agents / mlops / frontend 4-갈래) → docker build (PR 전용)
+
+---
+
+## 테스트 전략
+
+- **Backend 단위 + 통합** — pytest + pytest-asyncio + aiosqlite. 위치 `backend/tests/`. `make test` 또는 CI 잡 `test-backend` (postgres + redis 서비스 컨테이너).
+- **Agents 단위** — pytest-asyncio + fakeredis. 위치 `agents/tests/`. CI 잡 `test-agents` (서비스 컨테이너 없음 — Anthropic / torch 미설치 환경).
+- **MLOps 단위** — pytest. 위치 `mlops/tests/`. CI 잡 `test-mlops` (회로차단기 / 감사로그 / drift / 설정).
+- **Frontend 단위** — Vitest + React Testing Library + jsdom. 위치 `frontend/src/**/*.test.{ts,tsx}`. `cd frontend && npm test` 또는 CI 잡 `test-frontend`.
+- **Frontend E2E** — Playwright (Chromium). 위치 `frontend/e2e/`. `npm run e2e` (stack 기동 후).
+- **부하 테스트** — k6 (REST / WebSocket / SSE). 위치 `load/*.k6.js`. 로컬 수동 실행; CI 대신 별도 호스트 권장.
+- **시크릿 스캔** — gitleaks (`.gitleaks.toml`). CI 잡 `secret-scan` (`fetch-depth: 0`).
+
+**런타임 신뢰성 검증**:
+
+- `MockEventSource` / `MockWebSocket` 폴리필 (`frontend/src/test/setup.ts`) — jsdom 에 없는 브라우저 API 를 imperative 제어 가능한 stub 으로 대체. SSE/WS 재연결 정책을 fake timer 로 직접 검증.
+- `CircuitBreaker` / `ResponseCache` (`mlops/api/resilience.py`) — 11개 테스트로 상태 전이 + 캐시 폴백 + cold-start 동작 검증.
+- `useEventSource` / `useWebSocket` — 16개 테스트로 reconnect / buffer trim / unmount cleanup / send no-op 등 엣지 동작 검증.
+
+**프론트 글로벌 에러 차단**: `<ErrorBoundary>` 컴포넌트가 두 레이어로 적용 — `<App>` 최외곽 + `<AppLayout>` per-route. 컴포넌트 크래시가 흰 화면을 만들지 않으며, fallback UI 는 인라인 스타일로 Tailwind 의존성 없이 렌더.

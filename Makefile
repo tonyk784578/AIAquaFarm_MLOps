@@ -1,4 +1,4 @@
-.PHONY: help up down build rebuild logs shell migrate seed health lint test
+.PHONY: help up down build rebuild logs shell migrate seed health lint test codegen backup
 
 # Default target
 help:
@@ -30,6 +30,8 @@ help:
 	@echo "  format       Run ruff formatter"
 	@echo "  test         Run backend tests"
 	@echo "  test-cov     Run tests with coverage"
+	@echo "  codegen      Regenerate frontend TS types from backend OpenAPI"
+	@echo "  backup       Dump Postgres + MLflow DB to ./backups/ (ARGS=--upload to push to S3)"
 	@echo ""
 	@echo "Setup:"
 	@echo "  setup        Initial project setup"
@@ -112,6 +114,22 @@ test:
 
 test-cov:
 	docker compose exec backend pytest tests/ -v --cov=app --cov-report=html
+
+# ── API type codegen ──────────────────────────────────────────
+# Fetch OpenAPI spec from the running backend and regenerate
+# the TypeScript type bindings consumed by the frontend.
+# Requires `make up` first so http://localhost:8000/openapi.json responds.
+codegen:
+	@echo "Regenerating frontend/src/types/api.d.ts from backend OpenAPI"
+	cd frontend && npm run codegen
+
+# ── Database backup ───────────────────────────────────────────
+# Manual on-demand pg_dump of aquafarm + aquafarm_mlflow to ./backups/.
+# Use ARGS=--upload to also push to S3/MinIO (requires S3_* env vars).
+# The k8s deployment runs the equivalent job nightly via
+# infra/k8s/postgres/backup-cronjob.yaml.
+backup:
+	@scripts/backup_postgres.sh $(ARGS)
 
 # ── Setup ─────────────────────────────────────────────────────
 

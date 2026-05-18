@@ -14,19 +14,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import httpx
 import structlog
 
 from agents.config import get_agent_settings
 from agents.management_agent.state import AgentState, FarmSnapshot
+from agents.runtime.http import AgentHTTPClient
+from agents.runtime.llm import LLMClient, LLMUnavailableError
 
 logger = structlog.get_logger()
 settings = get_agent_settings()
-
-
-def _svc_headers() -> dict[str, str]:
-    key = settings.backend_api_key
-    return {"X-Service-Key": key} if key else {}
 
 # ── System prompt ──────────────────────────────────────────────────────────────
 
@@ -111,10 +107,8 @@ async def collect_farm_data(state: AgentState) -> dict[str, Any]:
     """
     logger.info("collecting_farm_data")
     try:
-        async with httpx.AsyncClient(timeout=10.0, headers=_svc_headers()) as client:
-            resp = await client.get(f"{settings.backend_url}/api/v1/dashboard/summary")
-            resp.raise_for_status()
-            data = resp.json()
+        async with AgentHTTPClient() as client:
+            data = await client.get_json("/api/v1/dashboard/summary")
 
         snapshot: FarmSnapshot = {
             "water_quality": data.get("water_quality") or {},
@@ -218,30 +212,19 @@ async def analyse_situation(state: AgentState) -> dict[str, Any]:
     history.append({"role": "user", "content": user_message})
 
     try:
-        import anthropic
-
-        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-        response = await client.messages.create(
-            model=settings.llm_model,
-            max_tokens=settings.llm_max_tokens,
-            temperature=settings.llm_temperature,
+        llm = LLMClient(timeout_s=settings.llm_timeout_seconds)
+        response = await llm.messages(
             system=_SYSTEM_PROMPT,
-            tools=_TOOLS,
             messages=history,
+            tools=_TOOLS,
         )
 
         # Persist assistant turn so future cycles can reference prior reasoning
-        assistant_content = [
-            block.model_dump() if hasattr(block, "model_dump") else vars(block)
-            for block in response.content
-        ]
-        history.append({"role": "assistant", "content": assistant_content})
+        history.append({"role": "assistant", "content": LLMClient.dump_content(response)})
 
-        decisions: list[dict[str, Any]] = []
-        for block in response.content:
-            if block.type == "tool_use" and block.name == "decide_control_action":
-                decisions = block.input.get("decisions", [])
-                break
+        decisions = (LLMClient.extract_tool_input(response, "decide_control_action") or {}).get(
+            "decisions", []
+        )
 
         if not decisions:
             decisions = [{
@@ -300,7 +283,7 @@ async def execute_commands(state: AgentState) -> dict[str, Any]:
     decisions = state.get("control_decisions", [])
     executed: list[dict[str, Any]] = []
 
-    async with httpx.AsyncClient(timeout=10.0, headers=_svc_headers()) as client:
+    async with AgentHTTPClient() as client:
         for decision in decisions:
             action = decision.get("action_type")
             tank_id = decision.get("tank_id", "ALL")
@@ -311,43 +294,34 @@ async def execute_commands(state: AgentState) -> dict[str, Any]:
                     continue
 
                 elif action == "stop_feeding":
-                    resp = await client.post(
-                        f"{settings.backend_url}/api/v1/control/feeding/stop/{tank_id}"
-                    )
-                    resp.raise_for_status()
+                    await client.post_json(f"/api/v1/control/feeding/stop/{tank_id}")
                     executed.append({"decision": decision, "status": "ok"})
 
                 elif action == "reduce_feeding":
-                    factor = params.get("reduction_factor", 0.5)
-                    resp = await client.post(
-                        f"{settings.backend_url}/api/v1/control/feeding/adjust",
-                        json={"tank_id": tank_id, "reduction_factor": factor},
+                    await client.post_json(
+                        "/api/v1/control/feeding/adjust",
+                        {"tank_id": tank_id, "reduction_factor": params.get("reduction_factor", 0.5)},
                     )
-                    resp.raise_for_status()
                     executed.append({"decision": decision, "status": "ok"})
 
                 elif action == "increase_aeration":
-                    boost = params.get("boost_pct", 30.0)
-                    resp = await client.post(
-                        f"{settings.backend_url}/api/v1/control/aeration/increase",
-                        json={"tank_id": tank_id, "boost_pct": boost},
+                    await client.post_json(
+                        "/api/v1/control/aeration/increase",
+                        {"tank_id": tank_id, "boost_pct": params.get("boost_pct", 30.0)},
                     )
-                    resp.raise_for_status()
                     executed.append({"decision": decision, "status": "ok"})
 
                 elif action == "water_exchange":
-                    pct = params.get("exchange_pct", 10.0)
-                    resp = await client.post(
-                        f"{settings.backend_url}/api/v1/control/water-exchange",
-                        json={"tank_id": tank_id, "exchange_pct": pct},
+                    await client.post_json(
+                        "/api/v1/control/water-exchange",
+                        {"tank_id": tank_id, "exchange_pct": params.get("exchange_pct", 10.0)},
                     )
-                    resp.raise_for_status()
                     executed.append({"decision": decision, "status": "ok"})
 
                 elif action == "create_alert":
-                    resp = await client.post(
-                        f"{settings.backend_url}/api/v1/alerts/",
-                        json={
+                    await client.post_json(
+                        "/api/v1/alerts/",
+                        {
                             "tank_id": tank_id,
                             "severity": params.get("severity", "warning"),
                             "category": params.get("category", "water_quality"),
@@ -356,15 +330,12 @@ async def execute_commands(state: AgentState) -> dict[str, Any]:
                             "source": "management_agent",
                         },
                     )
-                    resp.raise_for_status()
                     executed.append({"decision": decision, "status": "ok"})
 
                 logger.info("command_executed", action=action, tank_id=tank_id)
 
             except Exception as exc:
-                logger.error(
-                    "command_failed", action=action, tank_id=tank_id, error=str(exc)
-                )
+                logger.error("command_failed", action=action, tank_id=tank_id, error=str(exc))
                 executed.append({"decision": decision, "status": "error", "error": str(exc)})
 
     return {"executed_commands": executed}

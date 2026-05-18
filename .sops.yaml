@@ -1,0 +1,36 @@
+# SOPS configuration — controls how `sops` encrypts files when committed.
+#
+# Two creation_rules:
+#   1. infra/k8s/secrets/*.enc.yaml         — Kubernetes Secret manifests
+#   2. .env.encrypted, secrets/*.enc.*      — repo-level non-k8s secrets
+#
+# Recipients are picked up from the matching rule. Replace the placeholder
+# fingerprints/KMS ARNs with the team's actual keys before committing real
+# encrypted files. Until then, this file documents the policy.
+#
+# Quick start (with age):
+#
+#   age-keygen -o ~/.config/sops/age/keys.txt
+#   # copy the public key (age1...) into the `age:` block below
+#   sops --encrypt --in-place infra/k8s/secrets/aquafarm.enc.yaml
+#
+# CI/CD decrypts with `SOPS_AGE_KEY` set from a vault.
+
+creation_rules:
+  # Kubernetes secret manifests — encrypt only `data` / `stringData` fields,
+  # leave metadata + apiVersion in plaintext so kubectl can still read them.
+  - path_regex: ^infra/k8s/secrets/.*\.enc\.ya?ml$
+    encrypted_regex: '^(data|stringData)$'
+    age:
+      # Replace with `age-keygen` public keys (one per maintainer).
+      # Example:
+      # - age1u7q6jq3gccmtu7q...
+      []
+    # Alternative recipient set if your team uses AWS KMS:
+    # kms:
+    #   - arn:aws:kms:us-east-1:111122223333:alias/aquafarm-secrets
+
+  # Generic encrypted env file (.env.encrypted)
+  - path_regex: ^(.env\.encrypted|secrets/.*\.enc\..*)$
+    age:
+      []

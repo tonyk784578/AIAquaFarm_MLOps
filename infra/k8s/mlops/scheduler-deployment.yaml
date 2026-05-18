@@ -1,0 +1,98 @@
+# MLOps scheduler — long-running process that runs AutoML + drift cycles
+# on the cadence configured by MLOPS_AUTOML_INTERVAL_MIN / MLOPS_DRIFT_INTERVAL_MIN.
+# Companion to the existing CronJob in cronjob.yaml; the CronJob runs every 6 h
+# as a safety net while this Deployment keeps the dashboard data fresh and
+# emits per-cycle audit events that the API exposes to the frontend.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlops-scheduler
+  namespace: aquafarm
+  labels:
+    app: mlops-scheduler
+    component: mlops
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # exclusive ownership of the audit log + training subprocesses
+  selector:
+    matchLabels:
+      app: mlops-scheduler
+  template:
+    metadata:
+      labels:
+        app: mlops-scheduler
+        component: mlops
+    spec:
+      initContainers:
+        - name: wait-for-mlflow
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z mlflow 5000; do
+                echo "waiting for mlflow..."; sleep 5
+              done
+      containers:
+        - name: scheduler
+          image: aquafarm/mlops:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "mlops", "scheduler"]
+          envFrom:
+            - configMapRef:
+                name: aquafarm-config
+          env:
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow:5000
+            - name: MLOPS_DATA_DIR
+              value: /data
+            - name: MLOPS_AUDIT_LOG
+              value: /data/audit/automl.jsonl
+            - name: MLOPS_ARTIFACT_DIR
+              value: /data/artifacts
+            - name: MLOPS_AUTOML_INTERVAL_MIN
+              value: "60"
+            - name: MLOPS_DRIFT_INTERVAL_MIN
+              value: "15"
+            - name: MLOPS_DRY_RUN
+              value: "true"
+            - name: INTERNAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aquafarm-secrets
+                  key: INTERNAL_API_KEY
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aquafarm-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aquafarm-secrets
+                  key: S3_SECRET_KEY
+            - name: S3_ENDPOINT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: aquafarm-secrets
+                  key: S3_ENDPOINT_URL
+            - name: S3_BUCKET_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: aquafarm-secrets
+                  key: S3_BUCKET_NAME
+          volumeMounts:
+            - name: mlops-data
+              mountPath: /data
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "300m"
+            limits:
+              memory: "2Gi"
+              cpu: "1500m"
+      volumes:
+        - name: mlops-data
+          persistentVolumeClaim:
+            claimName: mlops-data

@@ -168,7 +168,22 @@ python mlops/training/train_growth.py --mlflow-uri http://localhost:5000
 
 ### AutoML 실행 (자동 재훈련)
 
+운영 환경에서는 `mlops_scheduler` 컨테이너가 60분 주기로 자동 실행합니다. 수동 트리거가 필요하면:
+
 ```bash
+# 단일 모델 — 백엔드 프록시 경유 (관리자 로그인 쿠키 필요)
+curl -X POST -b 'aq_access=<cookie>' \
+     http://localhost:8000/api/v1/mlops/retrain \
+     -H 'Content-Type: application/json' \
+     -d '{"model": "WaterQualityPredictor", "dry_run": true}'
+
+# 또는 mlops_api 직접 호출 (X-Service-Key 헤더 필요)
+curl -X POST -H "X-Service-Key: $INTERNAL_API_KEY" \
+     http://localhost:8002/retrain \
+     -H 'Content-Type: application/json' \
+     -d '{"model": "WaterQualityPredictor", "dry_run": true}'
+
+# 클래식 CLI (실험용)
 python -m mlops.training.automl \
     --mlflow-uri http://localhost:5000 \
     --data-dir /data \
@@ -182,6 +197,22 @@ python -m mlops.training.automl \
 | FishDetection | 500장 | ≥ 0.20 |
 | FeedingActivityClassifier | 300장 | ≥ 0.20 |
 | WaterQualityPredictor | 1,000행 | ≥ 0.20 |
+
+### MLOps 관측
+
+```bash
+# mlops_api 헬스 + 감사로그 이벤트 수
+curl http://localhost:8002/health
+
+# MLflow 레지스트리 라이브 조회 (회로차단기 통과)
+curl -b 'aq_access=<cookie>' http://localhost:8000/api/v1/mlops/registry | jq
+
+# 최근 감사 로그 50개
+curl -b 'aq_access=<cookie>' http://localhost:8000/api/v1/mlops/audit?n=50 | jq
+
+# 컨테이너에서 직접 JSONL 확인
+docker compose exec mlops_scheduler tail -f /data/audit/automl.jsonl
+```
 
 ---
 
@@ -222,6 +253,61 @@ PH_MAX=8.5                     # pH 최댓값
 TEMPERATURE_MIN_C=18.0         # 수온 최솟값 (°C)
 TEMPERATURE_MAX_C=28.0         # 수온 최댓값 (°C)
 ```
+
+### 관측성 스택 (Prometheus + Grafana + OTel Collector)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+
+# 접속 주소
+# - Prometheus  http://localhost:9090
+# - Grafana     http://localhost:3001  (admin / admin)
+# - OTel gRPC   otel-collector:4317
+```
+
+`/metrics` 는 기본 활성화 (끄려면 `OBSERVABILITY_METRICS_ENABLED=false`).
+트레이스를 실제로 송신하려면 `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317` 를 `.env` 에 추가 후 백엔드/에이전트/mlops_api 재기동.
+
+### 데이터베이스 백업
+
+```bash
+# 로컬 1회성 — ./backups/{db}-{ISO_TS}.dump 생성
+make backup
+
+# S3/MinIO 업로드까지 한 번에
+S3_ENDPOINT_URL=http://localhost:9000 \
+S3_BUCKET_NAME=aquafarm-datalake \
+S3_ACCESS_KEY=minioadmin S3_SECRET_KEY=minioadmin \
+make backup ARGS=--upload
+```
+
+K8s 환경에서는 [`infra/k8s/postgres/backup-cronjob.yaml`](../infra/k8s/postgres/backup-cronjob.yaml)
+이 매일 03:00 UTC 에 자동 실행됩니다.
+
+### 프론트엔드 + API 동기화
+
+```bash
+# 백엔드 OpenAPI 변경 시 — TS 타입 코드젠
+make codegen
+
+# 프론트엔드 단위 테스트
+cd frontend && npm install
+npm test                     # Vitest
+npm run e2e:install          # Playwright 최초 1회
+npm run e2e                  # E2E (stack 기동 필수)
+```
+
+### 부하 테스트 (k6)
+
+```bash
+# 설치: https://k6.io/docs/get-started/installation/
+
+k6 run load/dashboard.k6.js                          # REST smoke
+K6_VUS=25 K6_DURATION=2m k6 run load/monitoring-ws.k6.js   # WebSocket 동접
+K6_VUS=10 K6_DURATION=60s k6 run load/agents-sse.k6.js     # SSE
+```
+
+상세 내용은 [`load/README.md`](../load/README.md) 참고.
 
 ---
 
@@ -271,9 +357,34 @@ docker compose exec redis redis-cli subscribe wq:TANK-01  # 채널 구독 테스
 | Nginx (프론트엔드) | 80 |
 | Backend (FastAPI) | 8000 |
 | Agents (LangGraph) | 8001 |
+| MLOps API | 8002 |
 | MLflow | 5000 |
 | PostgreSQL | 5432 |
 | Redis | 6379 |
+| Prometheus (선택) | 9090 |
+| Grafana (선택) | 3001 |
+| OTel Collector (선택) | 4317 (gRPC), 4318 (HTTP) |
+
+### 에이전트 사이클이 멈춤 (`/agents` 페이지 "no_cycle_run_yet")
+
+```bash
+make logs-agents | grep -E 'management_cycle|retry_llm|scheduler' | tail -30
+# 1) ANTHROPIC_API_KEY 가 유효한지
+# 2) backend /api/v1/dashboard/summary 응답이 200인지 (그 안에서 postgres 의존)
+# 3) Redis 연결 — 'redis_unavailable_degraded' 로그 시 history 가 휘발됨
+```
+
+수동 트리거: `/agents` 페이지의 "수동 실행" 또는 `curl -X POST -H "X-Service-Key: $KEY" http://localhost:8001/run`.
+
+### MLflow 응답이 느림 / 5xx
+
+```bash
+docker compose logs mlops_api | grep -E 'circuit_(open|half_open|closed)|fallback' | tail
+# circuit_open 이면 회로차단기가 동작 중 — 30초 후 자동 복구 시도.
+# 그 사이 /registry, /drift 응답은 마지막 캐시 스냅샷이 반환됩니다.
+```
+
+상세 시나리오는 [`docs/runbook.md`](runbook.md) 참고.
 
 ---
 
@@ -291,12 +402,23 @@ docker compose exec redis redis-cli subscribe wq:TANK-01  # 채널 구독 테스
 
 ### 네트워크 / 인프라
 
-- [ ] Nginx HTTPS 설정 (Let's Encrypt 또는 자체 인증서)
+- [ ] Nginx HTTPS 설정 (Let's Encrypt 또는 자체 인증서) — 보안 헤더(HSTS/CSP/X-Frame-Options 등)는 [`infra/nginx/nginx.conf`](../infra/nginx/nginx.conf)에 이미 포함
 - [ ] `CORS_ORIGINS` 실제 도메인으로 제한
+- [ ] `MLOPS_CORS_ORIGINS` 기본 빈 값 유지 — mlops_api 는 백엔드 프록시만 통하도록 차단
 - [ ] MLflow 외부 접근 차단 또는 인증 추가
+- [ ] `MAX_REQUEST_BYTES` 검토 (기본 1 MiB — 대용량 업로드는 S3 직접 경유)
+- [ ] (선택) `OTEL_EXPORTER_OTLP_ENDPOINT` 를 사내 트레이싱 백엔드(Tempo/Jaeger)로 설정
 
 ### 데이터 / 운영
 
 - [ ] S3 버킷 설정 (`S3_ENDPOINT_URL`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET_NAME`)
-- [ ] 백업 정책 설정 (PostgreSQL WAL, S3 versioning)
-- [ ] K8s Secrets에 실제 값 주입 (Sealed Secrets 또는 External Secrets Operator)
+- [ ] 백업 CronJob 활성화 — [`infra/k8s/postgres/backup-cronjob.yaml`](../infra/k8s/postgres/backup-cronjob.yaml) (S3 버킷 lifecycle 로 7일 보존)
+- [ ] K8s Secrets에 실제 값 주입 — sealed-secrets 또는 SOPS+age 워크플로 ([`infra/k8s/secrets/README.md`](../infra/k8s/secrets/README.md))
+- [ ] Prometheus + Grafana 운영용 인스턴스 연동 + 알람룰 정의
+- [ ] gitleaks CI 잡이 protected branch rule 에 포함됨을 확인
+
+### 운영 문서
+
+- [ ] 운영팀이 [`docs/runbook.md`](runbook.md) 의 9개 시나리오를 숙지
+- [ ] [`CONTRIBUTING.md`](../CONTRIBUTING.md) 의 워크플로를 신규 개발자에게 안내
+- [ ] [`CHANGELOG.md`](../CHANGELOG.md) 를 릴리스마다 갱신

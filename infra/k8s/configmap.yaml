@@ -18,3 +18,10 @@ data:
   DEBUG: "false"
   SENSOR_POLL_INTERVAL: "5"
   DEFAULT_TANK_IDS: '["tank_01","tank_02","tank_03"]'
+  MLOPS_API_URL: http://mlops-api:8002
+  # Observability — set OTEL_EXPORTER_OTLP_ENDPOINT to enable tracing in-cluster.
+  # Leave empty to disable. /metrics is exposed unconditionally on every service.
+  OBSERVABILITY_METRICS_ENABLED: "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+  DEPLOY_ENV: production

@@ -1,0 +1,123 @@
+# MLOps observability + admin API (FastAPI on :8002).
+# Backend proxies /api/v1/mlops/* to this service over the cluster network;
+# the X-Service-Key header is injected by the backend, so this Service is not
+# exposed via Ingress.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlops-api
+  namespace: aquafarm
+  labels:
+    app: mlops-api
+    component: mlops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlops-api
+  template:
+    metadata:
+      labels:
+        app: mlops-api
+        component: mlops
+    spec:
+      initContainers:
+        - name: wait-for-mlflow
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z mlflow 5000; do
+                echo "waiting for mlflow..."; sleep 5
+              done
+      containers:
+        - name: api
+          image: aquafarm/mlops:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "mlops", "api"]
+          ports:
+            - containerPort: 8002
+              name: http
+          envFrom:
+            - configMapRef:
+                name: aquafarm-config
+          env:
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow:5000
+            - name: MLOPS_DATA_DIR
+              value: /data
+            - name: MLOPS_AUDIT_LOG
+              value: /data/audit/automl.jsonl
+            - name: MLOPS_API_HOST
+              value: 0.0.0.0
+            - name: MLOPS_API_PORT
+              value: "8002"
+            - name: INTERNAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aquafarm-secrets
+                  key: INTERNAL_API_KEY
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aquafarm-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aquafarm-secrets
+                  key: S3_SECRET_KEY
+            - name: S3_ENDPOINT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: aquafarm-secrets
+                  key: S3_ENDPOINT_URL
+            - name: S3_BUCKET_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: aquafarm-secrets
+                  key: S3_BUCKET_NAME
+          volumeMounts:
+            - name: mlops-data
+              mountPath: /data
+              readOnly: false   # reads audit log; writes manual training events
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+      volumes:
+        - name: mlops-data
+          persistentVolumeClaim:
+            claimName: mlops-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlops-api
+  namespace: aquafarm
+  labels:
+    app: mlops-api
+spec:
+  selector:
+    app: mlops-api
+  ports:
+    - name: http
+      port: 8002
+      targetPort: 8002
+  type: ClusterIP

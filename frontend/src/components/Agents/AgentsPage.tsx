@@ -7,10 +7,235 @@
 // Reads from the agent service (FastAPI on :8001 via /agents proxy).
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Brain, RefreshCw, Zap } from 'lucide-react'
-import { getAgentCycleStatus, getAgentHealth, triggerAgentCycle } from '@/services/api'
+import {
+  AlertCircle, Brain, CheckCircle, Clock, Radio, RefreshCw, Zap,
+} from 'lucide-react'
+
+import { useEventSource } from '@/hooks/useEventSource'
+import {
+  agentEventStreamUrl,
+  getAgentCycleStatus,
+  getAgentHealth,
+  getAgentHistory,
+  triggerAgentCycle,
+} from '@/services/api'
 import type { AgentCycleStatus } from '@/types'
+import { eventSummary } from '@/utils/format'
 import AgentGraphVisualization from './AgentGraphVisualization'
+
+const EVENT_KIND_COLORS: Record<string, string> = {
+  cycle_started:          'var(--info)',
+  cycle_completed:        'var(--ok)',
+  node_started:           'var(--text-muted)',
+  node_completed:         'var(--ok)',
+  decision_made:          'var(--info)',
+  command_executed:       'var(--ok)',
+  command_failed:         'var(--danger)',
+  optimization_started:   'var(--info)',
+  optimization_completed: 'var(--ok)',
+  error:                  'var(--danger)',
+}
+
+// ── Live SSE event stream ───────────────────────────────────────────────────
+
+function AgentEventStream() {
+  const { status, events, reconnectAttempts } = useEventSource(agentEventStreamUrl(), {
+    bufferSize: 50,
+    reconnectBaseDelay: 1_000,
+  })
+
+  const statusBadge = (() => {
+    if (status === 'open') return { label: '실시간 연결', color: 'var(--ok)', bg: 'rgba(5,150,105,0.12)' }
+    if (status === 'connecting') return { label: '연결 중…', color: 'var(--info)', bg: 'rgba(37,99,235,0.12)' }
+    if (status === 'error')
+      return {
+        label: `재연결 (${reconnectAttempts})`,
+        color: 'var(--warn)',
+        bg: 'rgba(217,119,6,0.12)',
+      }
+    return { label: '연결 종료', color: 'var(--text-muted)', bg: 'var(--bg-elevated)' }
+  })()
+
+  return (
+    <div className="card space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Radio
+            size={14}
+            style={{ color: statusBadge.color }}
+            className={status === 'open' ? 'animate-pulse' : ''}
+          />
+          <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+            라이브 이벤트 (SSE)
+          </h3>
+          <span
+            className="text-xs px-2 py-0.5 rounded-full font-semibold"
+            style={{ backgroundColor: statusBadge.bg, color: statusBadge.color }}
+          >
+            {statusBadge.label}
+          </span>
+        </div>
+        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          {events.length} / 50
+        </span>
+      </div>
+
+      <ul className="space-y-0 max-h-64 overflow-y-auto">
+        {events.length === 0 && (
+          <li className="text-xs py-3 text-center" style={{ color: 'var(--text-muted)' }}>
+            {status === 'open' ? '이벤트 대기 중…' : '에이전트 서비스 연결을 확인하세요.'}
+          </li>
+        )}
+        {[...events].reverse().map((ev, i) => {
+          const color = EVENT_KIND_COLORS[ev.kind] || 'var(--text-muted)'
+          const ts = new Date(ev.ts).toLocaleTimeString()
+          const summary = eventSummary(ev)
+          return (
+            <li
+              key={`${ev.ts}-${i}`}
+              className="flex items-center gap-2 py-1.5 text-xs"
+              style={{ borderBottom: '1px solid var(--bg-border)' }}
+            >
+              <span
+                className="w-1.5 h-1.5 rounded-full shrink-0"
+                style={{ backgroundColor: color }}
+              />
+              <span className="font-mono shrink-0" style={{ color }}>
+                {ev.kind}
+              </span>
+              {ev.tank_id && (
+                <span
+                  className="font-mono text-xs px-1.5 py-0 rounded"
+                  style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+                >
+                  {ev.tank_id}
+                </span>
+              )}
+              {summary && (
+                <span className="line-clamp-1 flex-1" style={{ color: 'var(--text-secondary)' }}>
+                  {summary}
+                </span>
+              )}
+              <span className="ml-auto shrink-0" style={{ color: 'var(--text-muted)' }}>
+                {ts}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+// ── Cycle history timeline ──────────────────────────────────────────────────
+
+function AgentHistoryTimeline() {
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ['agent-history'],
+    queryFn: () => getAgentHistory(20),
+    refetchInterval: 30_000,
+    retry: false,
+  })
+
+  return (
+    <div className="card space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Clock size={14} style={{ color: 'var(--text-muted)' }} />
+          <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+            최근 사이클 이력
+          </h3>
+        </div>
+        <button
+          onClick={() => refetch()}
+          className="p-1"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <RefreshCw size={13} />
+        </button>
+      </div>
+
+      {isLoading && (
+        <p className="text-xs animate-pulse" style={{ color: 'var(--text-muted)' }}>
+          이력 로딩중…
+        </p>
+      )}
+      {isError && (
+        <p className="text-xs flex items-center gap-1.5" style={{ color: 'var(--danger)' }}>
+          <AlertCircle size={12} />이력 조회 실패 (Redis 미연결 가능성)
+        </p>
+      )}
+      {data && data.items.length === 0 && (
+        <p className="text-xs text-center py-3" style={{ color: 'var(--text-muted)' }}>
+          아직 실행된 사이클이 없습니다
+        </p>
+      )}
+
+      {data && data.items.length > 0 && (
+        <ul className="space-y-2 max-h-80 overflow-y-auto">
+          {data.items.map((item, idx) => {
+            const decisionCount = Array.isArray(item.decisions) ? item.decisions.length : 0
+            const execCount = Array.isArray(item.executed) ? item.executed.length : 0
+            const nonTrivial = Array.isArray(item.decisions)
+              ? item.decisions.filter((d) => d.action_type !== 'no_action').length
+              : 0
+            const ts = item.ran_at ? new Date(item.ran_at).toLocaleString() : '—'
+            const hasError = Boolean(item.error)
+            return (
+              <li
+                key={`${item.ran_at}-${idx}`}
+                className="rounded-xl px-3 py-2.5 flex gap-3 items-start"
+                style={{
+                  backgroundColor: 'var(--bg-elevated)',
+                  borderLeft: `3px solid ${hasError ? 'var(--danger)' : nonTrivial > 0 ? 'var(--warn)' : 'var(--ok)'}`,
+                }}
+              >
+                <div className="flex-shrink-0 mt-0.5">
+                  {hasError ? (
+                    <AlertCircle size={14} style={{ color: 'var(--danger)' }} />
+                  ) : (
+                    <CheckCircle size={14} style={{ color: 'var(--ok)' }} />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-mono" style={{ color: 'var(--text-secondary)' }}>
+                      결정 {decisionCount} · 실행 {execCount}
+                    </span>
+                    {nonTrivial > 0 && (
+                      <span
+                        className="text-xs px-1.5 py-0.5 rounded font-semibold"
+                        style={{ backgroundColor: 'rgba(217,119,6,0.12)', color: 'var(--warn)' }}
+                      >
+                        조치 {nonTrivial}
+                      </span>
+                    )}
+                    <span className="ml-auto text-xs" style={{ color: 'var(--text-muted)' }}>
+                      {ts}
+                    </span>
+                  </div>
+                  {item.final_report && (
+                    <p
+                      className="text-xs mt-1 line-clamp-2"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      {item.final_report}
+                    </p>
+                  )}
+                  {hasError && (
+                    <p className="text-xs mt-1" style={{ color: 'var(--danger)' }}>
+                      {item.error}
+                    </p>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
 
 // ── Live status / manual-run panel ──────────────────────────────────────────
 
@@ -160,6 +385,14 @@ export default function AgentsPage() {
       <section>
         <p className="section-title">실시간 상태</p>
         <AgentLiveStatus />
+      </section>
+
+      <section>
+        <p className="section-title">라이브 이벤트 + 사이클 이력</p>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <AgentEventStream />
+          <AgentHistoryTimeline />
+        </div>
       </section>
 
       <section>

@@ -139,3 +139,121 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ── MLOps package tests ─────────────────────────────────────────────────────
+  test-mlops:
+    name: MLOps Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install MLOps deps
+        run: |
+          pip install \
+            "mlflow>=2.13.0" \
+            "boto3>=1.34.0" \
+            "pandas>=2.2.0" \
+            "numpy>=1.26.0" \
+            "scikit-learn>=1.5.0" \
+            "httpx>=0.27.0" \
+            "pydantic>=2.7.0" \
+            "pydantic-settings>=2.3.0" \
+            "structlog>=24.2.0" \
+            "schedule>=1.2.0" \
+            "fastapi>=0.115.0" \
+            "pytest>=8.2.0"
+
+      - name: Run mlops tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: pytest mlops/tests/ -v --tb=short
+
+  # ── Secret scanning (gitleaks) ─────────────────────────────────────────────
+  secret-scan:
+    name: Secret Scan (gitleaks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gitleaks scans the full history on push
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: ${{ github.workspace }}/.gitleaks.toml
+          # GITLEAKS_LICENSE is only required for org-scope features;
+          # the free single-repo scan needs no token.
+
+  # ── Frontend tests (Vitest + RTL) ──────────────────────────────────────────
+  test-frontend:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install deps
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Run unit tests
+        run: npm test
+
+  # ── Agents package tests ────────────────────────────────────────────────────
+  test-agents:
+    name: Agents Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Agents deps (skip torch/anthropic-heavy)
+        run: |
+          pip install \
+            "fastapi>=0.115.0" \
+            "uvicorn[standard]>=0.30.0" \
+            "httpx>=0.27.0" \
+            "redis[asyncio]>=5.0.0" \
+            "pydantic>=2.7.0" \
+            "pydantic-settings>=2.3.0" \
+            "structlog>=24.2.0" \
+            "tenacity>=8.3.0" \
+            "sse-starlette>=2.1.0" \
+            "pytest>=8.2.0" \
+            "pytest-asyncio>=0.23.0" \
+            "fakeredis>=2.23.0"
+
+      - name: Run agents tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          ANTHROPIC_API_KEY: ci-test-key
+          BACKEND_API_KEY: ci-test-service-key
+          REDIS_URL: redis://localhost:6379/0
+        run: pytest agents/tests/ -v --tb=short

@@ -1,0 +1,57 @@
+# gitleaks config — extends the upstream default ruleset.
+#
+# CI scans every push + PR against this file. Local devs can run the same
+# scan via:
+#
+#   docker run --rm -v "$PWD":/repo zricethezav/gitleaks:latest \
+#       detect --source /repo --config /repo/.gitleaks.toml --redact
+
+title = "AIAquafarm gitleaks policy"
+
+# Inherit the upstream default detectors (AWS keys, generic API keys,
+# JWTs, slack webhooks, GitHub PATs, etc.).
+[extend]
+useDefault = true
+
+# Project-specific extras —
+[[rules]]
+id          = "aquafarm-internal-key"
+description = "Hardcoded INTERNAL_API_KEY value (should be in .env or sealed secret)"
+regex       = '''(?i)INTERNAL_API_KEY\s*[:=]\s*['"]?[A-Za-z0-9]{16,}['"]?'''
+keywords    = ["INTERNAL_API_KEY"]
+
+[[rules]]
+id          = "aquafarm-jwt-secret"
+description = "Hardcoded SECRET_KEY / JWT_REFRESH_SECRET_KEY"
+regex       = '''(?i)(SECRET_KEY|JWT_REFRESH_SECRET_KEY)\s*[:=]\s*['"]?[A-Za-z0-9]{32,}['"]?'''
+keywords    = ["SECRET_KEY", "JWT_REFRESH_SECRET_KEY"]
+
+[[rules]]
+id          = "anthropic-api-key"
+description = "Anthropic API key"
+regex       = '''sk-ant-[A-Za-z0-9_-]{30,}'''
+keywords    = ["sk-ant-"]
+
+# Paths that should never be scanned (templates, encrypted files, lockfiles).
+[allowlist]
+description = "Documentation, encrypted secrets, lockfiles, generated types"
+paths = [
+    '''(?i).*\.md$''',
+    '''.*\.example.*''',
+    '''.*\.enc\.(ya?ml|json|env)$''',
+    '''.*\.sealed\.ya?ml$''',
+    '''frontend/package-lock\.json$''',
+    '''frontend/src/types/api\.d\.ts$''',
+    '''\.env\.example$''',
+    '''docs/runbook\.md$''',
+]
+# Sample values used throughout the repo for documentation — never real secrets.
+regexes = [
+    '''CHANGE_ME[A-Z_0-9]*''',
+    '''aquafarm_secret''',
+    '''sk-ant-CHANGE_ME''',
+    '''change_me_to_a_random_internal_api_key''',
+    '''ci-test-(?:secret-)?(?:service-)?key''',
+    '''dev_secret_key_change_in_production''',
+    '''dev_secret_change_me''',
+]

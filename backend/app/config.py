@@ -179,6 +179,18 @@ class Settings(BaseSettings):
     s3_secret_key: str = ""
     s3_bucket_name: str = "aquafarm-datalake"
 
+    # ── MLOps service ──────────────────────────────────────────────────────
+    mlops_api_url: str = Field(
+        default="http://mlops_api:8002",
+        description="Base URL of the MLOps FastAPI service (mlops/api/server.py).",
+    )
+
+    # ── HTTP hardening ─────────────────────────────────────────────────────
+    max_request_bytes: int = Field(
+        default=1 * 1024 * 1024,
+        description="Reject HTTP requests whose body exceeds this size (1 MiB default).",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -10,9 +10,14 @@ and the caller's role must include CONTROL_WRITE permission.
 from __future__ import annotations
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from pydantic import BaseModel, Field
 
+from app.core.limiter import (
+    LIMIT_CONTROL_WRITE,
+    is_internal_service,
+    limiter,
+)
 from app.db.redis import get_redis
 from app.services.control_service import ControlService
 
@@ -53,7 +58,9 @@ def _svc(redis: aioredis.Redis = Depends(get_redis)) -> ControlService:
     summary="Manually trigger feeding",
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit(LIMIT_CONTROL_WRITE, exempt_when=is_internal_service)
 async def trigger_feeding(
+    request: Request,
     body: FeedingTriggerRequest,
     svc: ControlService = Depends(_svc),
 ) -> dict:
@@ -69,7 +76,9 @@ async def trigger_feeding(
     summary="Emergency stop feeding",
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit(LIMIT_CONTROL_WRITE, exempt_when=is_internal_service)
 async def stop_feeding(
+    request: Request,
     tank_id: str = _TANK_ID_PATH,
     svc: ControlService = Depends(_svc),
 ) -> dict:
@@ -85,7 +94,9 @@ async def stop_feeding(
     summary="Adjust next feeding amount",
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit(LIMIT_CONTROL_WRITE, exempt_when=is_internal_service)
 async def adjust_feeding(
+    request: Request,
     body: FeedingAdjustRequest,
     svc: ControlService = Depends(_svc),
 ) -> dict:
@@ -101,7 +112,9 @@ async def adjust_feeding(
     summary="Control circulation pump",
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit(LIMIT_CONTROL_WRITE, exempt_when=is_internal_service)
 async def control_pump(
+    request: Request,
     tank_id: str = _TANK_ID_PATH,
     action: str = Path(..., pattern=r"^(start|stop)$"),
     svc: ControlService = Depends(_svc),
@@ -118,7 +131,9 @@ async def control_pump(
     summary="Boost aeration blower",
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit(LIMIT_CONTROL_WRITE, exempt_when=is_internal_service)
 async def increase_aeration(
+    request: Request,
     body: AerationBoostRequest,
     svc: ControlService = Depends(_svc),
 ) -> dict:
@@ -134,7 +149,9 @@ async def increase_aeration(
     summary="Trigger partial water exchange",
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit(LIMIT_CONTROL_WRITE, exempt_when=is_internal_service)
 async def trigger_water_exchange(
+    request: Request,
     body: WaterExchangeRequest,
     svc: ControlService = Depends(_svc),
 ) -> dict:

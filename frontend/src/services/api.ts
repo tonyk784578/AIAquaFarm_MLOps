@@ -5,13 +5,19 @@ import axios from 'axios'
 import type {
   AgentCycleStatus,
   AgentHealth,
+  AgentHistoryResponse,
   Alert,
+  AuditResponse,
   DashboardSummary,
+  DriftResponse,
   FarmSettings,
   FeedingRecord,
   FishGrowthRecord,
+  MLOpsActionResponse,
   ModelStatus,
+  OptimizationHistoryResponse,
   OptimizationStatus,
+  RegistryResponse,
   Tank,
   TokenResponse,
   UserProfile,
@@ -219,3 +225,58 @@ export const triggerOptimization = (params: {
   selected_action: OptimizationStatus['selected_action']
   simulation_result: OptimizationStatus['simulation_result']
 }> => agentClient.post('optimize', params).then((r) => r.data)
+
+// ── Agent history ──────────────────────────────────────────────────────────────
+
+export const getAgentHistory = (n = 20): Promise<AgentHistoryResponse> =>
+  agentClient.get<AgentHistoryResponse>('history', { params: { n } }).then((r) => r.data)
+
+export const getOptimizationHistory = (
+  n = 20
+): Promise<OptimizationHistoryResponse> =>
+  agentClient
+    .get<OptimizationHistoryResponse>('history/optimization', { params: { n } })
+    .then((r) => r.data)
+
+// SSE stream URL (consumed by useEventSource hook — EventSource doesn't accept
+// custom headers, so this returns just the URL).
+export const agentEventStreamUrl = (): string => `${AGENT_BASE_URL}/events/stream`
+
+// ── MLOps (proxied via backend /api/v1/mlops/*) ───────────────────────────────
+
+export const getMLOpsRegistry = (): Promise<RegistryResponse> =>
+  apiClient.get<RegistryResponse>('/v1/mlops/registry').then((r) => r.data)
+
+export const getMLOpsAudit = (params?: {
+  n?: number
+  kind?: string
+  model?: string
+}): Promise<AuditResponse> =>
+  apiClient.get<AuditResponse>('/v1/mlops/audit', { params }).then((r) => r.data)
+
+export const getMLOpsDrift = (): Promise<DriftResponse> =>
+  apiClient.get<DriftResponse>('/v1/mlops/drift').then((r) => r.data)
+
+export const triggerMLOpsRetrain = (
+  model: string,
+  dryRun = false
+): Promise<MLOpsActionResponse> =>
+  apiClient
+    .post<MLOpsActionResponse>('/v1/mlops/retrain', { model, dry_run: dryRun })
+    .then((r) => r.data)
+
+export const triggerMLOpsPromote = (
+  model: string,
+  runId: string,
+  force = false
+): Promise<MLOpsActionResponse> =>
+  apiClient
+    .post<MLOpsActionResponse>('/v1/mlops/promote', { model, run_id: runId, force })
+    .then((r) => r.data)
+
+export const triggerMLOpsDeploy = (
+  model?: string
+): Promise<MLOpsActionResponse> =>
+  apiClient
+    .post<MLOpsActionResponse>('/v1/mlops/deploy', { model: model ?? null })
+    .then((r) => r.data)

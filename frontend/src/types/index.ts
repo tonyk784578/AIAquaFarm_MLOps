@@ -176,4 +176,106 @@ export interface AgentHealth {
   status: string
   service: string
   management_graph: boolean
+  redis_connected?: boolean
+  event_channel?: string
+  tanks?: string[]
+  cycle_interval_s?: number
+  version?: string
+}
+
+// ── MLOps API types (proxied via /api/v1/mlops/*) ─────────────────────────────
+
+export interface ModelVersionInfo {
+  name: string
+  version: string
+  stage: string
+  run_id: string
+}
+
+export interface RegisteredModel {
+  name: string
+  production_version: string | null
+  staging_version: string | null
+  versions: ModelVersionInfo[]
+}
+
+export interface RegistryResponse {
+  models: RegisteredModel[]
+}
+
+export type AuditEventKind =
+  | 'automl'
+  | 'drift'
+  | 'promotion'
+  | 'rollback'
+  | 'deployment'
+  | 'training'
+  | 'error'
+
+export interface AuditEntry {
+  ts: string
+  kind: AuditEventKind | string
+  model: string
+  data: Record<string, unknown>
+}
+
+export interface AuditResponse {
+  events: AuditEntry[]
+  count: number
+}
+
+export interface DriftFeature {
+  feature: string
+  psi: number
+  kl_divergence: number
+  status: 'stable' | 'warning' | 'drift' | string
+}
+
+export interface DriftReport {
+  model_name: string
+  max_psi: number
+  mean_psi: number
+  should_retrain: boolean
+  n_reference: number
+  n_current: number
+  features: DriftFeature[]
+}
+
+export interface DriftResponse {
+  reports: Record<string, DriftReport>
+}
+
+export interface MLOpsActionResponse {
+  ok: boolean
+  detail: string
+  data: Record<string, unknown>
+}
+
+// ── Agent live events (SSE channel `agents:events`) ───────────────────────────
+
+export type AgentEventKind =
+  | 'cycle_started'
+  | 'cycle_completed'
+  | 'node_started'
+  | 'node_completed'
+  | 'decision_made'
+  | 'command_executed'
+  | 'command_failed'
+  | 'optimization_started'
+  | 'optimization_completed'
+  | 'error'
+
+export interface AgentEvent {
+  ts: string
+  kind: AgentEventKind | string
+  tank_id: string
+  data: Record<string, unknown>
+}
+
+export interface AgentHistoryResponse {
+  items: AgentCycleStatus[]
+}
+
+export interface OptimizationHistoryResponse {
+  items: OptimizationStatus[]
 }

@@ -8,9 +8,10 @@ TODO (Phase 3): Add alert suppression rules and escalation policies.
 
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.limiter import LIMIT_ALERT_WRITE, is_internal_service, limiter
 from app.db.redis import get_redis
 from app.db.session import get_db
 from app.schemas.alert import AlertCreate, AlertRead, AlertUpdate
@@ -44,7 +45,9 @@ async def list_alerts(
 
 
 @router.post("/", response_model=AlertRead, status_code=201, summary="Create alert")
+@limiter.limit(LIMIT_ALERT_WRITE, exempt_when=is_internal_service)
 async def create_alert(
+    request: Request,
     payload: AlertCreate,
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),

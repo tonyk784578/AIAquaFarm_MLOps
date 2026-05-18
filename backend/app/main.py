@@ -168,6 +168,21 @@ def create_app() -> FastAPI:
         allow_headers=["Content-Type", "Authorization", "X-Service-Key"],
     )
 
+    # Hard limit on request bodies + defence-in-depth headers.
+    from app.core.security_middleware import (
+        RequestSizeLimitMiddleware,
+        SecurityHeadersMiddleware,
+    )
+    app.add_middleware(
+        RequestSizeLimitMiddleware,
+        max_body_bytes=getattr(settings, "max_request_bytes", 1 * 1024 * 1024),
+    )
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    # ── Observability (Prometheus metrics + OpenTelemetry tracing) ──
+    from app.observability import setup_observability
+    setup_observability(app, service_name="aquafarm-backend")
+
     app.include_router(api_router, prefix="/api")
 
     @app.get("/health", tags=["Health"], summary="Service health check")

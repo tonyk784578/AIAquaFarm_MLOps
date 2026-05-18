@@ -26,7 +26,15 @@ RUN pip install --no-cache-dir \
     "pydantic>=2.7.0" \
     "pydantic-settings>=2.3.0" \
     "structlog>=24.2.0" \
-    "tenacity>=8.3.0"
+    "tenacity>=8.3.0" \
+    "sse-starlette>=2.1.0" \
+    "prometheus-fastapi-instrumentator>=7.0.0" \
+    "opentelemetry-api>=1.27.0" \
+    "opentelemetry-sdk>=1.27.0" \
+    "opentelemetry-exporter-otlp-proto-grpc>=1.27.0" \
+    "opentelemetry-instrumentation-fastapi>=0.48b0" \
+    "opentelemetry-instrumentation-httpx>=0.48b0" \
+    "opentelemetry-instrumentation-redis>=0.48b0"
 
 # Place source in agents/ so hatchling can find the package.
 COPY . agents/

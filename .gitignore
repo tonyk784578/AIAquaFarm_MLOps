@@ -7,7 +7,18 @@ __pycache__/
 env/
 venv/
 .env
+.env.local
+.env.*.local
 .venv
+
+# Secret material — encrypted files (*.enc.*, *.sealed.yaml) are intentionally
+# allowed; plaintext keys and decrypted exports never are.
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/decrypted/
+~/.config/sops/age/keys.txt
 *.egg-info/
 dist/
 build/
@@ -23,6 +34,11 @@ node_modules/
 dist/
 .DS_Store
 *.local
+
+# Playwright artefacts
+test-results/
+playwright-report/
+playwright/.cache/
 
 # Docker
 .docker/

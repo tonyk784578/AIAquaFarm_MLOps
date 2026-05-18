@@ -13,20 +13,16 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
 import structlog
 
 from agents.config import get_agent_settings
 from agents.optimization_agent.state import OptimizationState
 from agents.optimization_agent.twin_sim import evaluate_candidates
+from agents.runtime.http import AgentHTTPClient
+from agents.runtime.llm import LLMClient
 
 logger = structlog.get_logger()
 settings = get_agent_settings()
-
-
-def _svc_headers() -> dict[str, str]:
-    key = settings.backend_api_key
-    return {"X-Service-Key": key} if key else {}
 
 # ── Candidate generation prompt ────────────────────────────────────────────────
 
@@ -106,38 +102,25 @@ async def gather_module_outputs(state: OptimizationState) -> dict[str, Any]:
     growth: dict[str, Any] = existing.get("growth_metrics", {})
     feeding: dict[str, Any] = existing.get("feeding_activity", {})
 
-    async with httpx.AsyncClient(timeout=10.0, headers=_svc_headers()) as client:
+    async with AgentHTTPClient() as client:
         # Water quality
-        try:
-            resp = await client.get(
-                f"{settings.backend_url}/api/v1/monitoring/water-quality/latest",
-                params={"tank_id": tank_id, "limit": 1},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                wq = data[0] if isinstance(data, list) and data else data or wq
-        except Exception as exc:
-            logger.warning("wq_fetch_failed", error=str(exc))
+        wq_data = await client.safe_get_json(
+            "/api/v1/monitoring/water-quality/latest", tank_id=tank_id, limit=1
+        )
+        if isinstance(wq_data, list) and wq_data:
+            wq = wq_data[0]
+        elif isinstance(wq_data, dict) and wq_data:
+            wq = wq_data
 
         # Growth count
-        try:
-            resp = await client.get(
-                f"{settings.backend_url}/api/v1/growth/count/{tank_id}"
-            )
-            if resp.status_code == 200:
-                growth = resp.json()
-        except Exception as exc:
-            logger.warning("growth_fetch_failed", error=str(exc))
+        growth_data = await client.safe_get_json(f"/api/v1/growth/count/{tank_id}")
+        if isinstance(growth_data, dict) and growth_data:
+            growth = growth_data
 
         # Feeding status
-        try:
-            resp = await client.get(
-                f"{settings.backend_url}/api/v1/feeding/status"
-            )
-            if resp.status_code == 200:
-                feeding = resp.json()
-        except Exception as exc:
-            logger.warning("feeding_fetch_failed", error=str(exc))
+        feeding_data = await client.safe_get_json("/api/v1/feeding/status")
+        if isinstance(feeding_data, dict) and feeding_data:
+            feeding = feeding_data
 
     logger.info(
         "module_outputs_gathered",
@@ -188,22 +171,16 @@ async def generate_candidates(state: OptimizationState) -> dict[str, Any]:
     )
 
     try:
-        import anthropic
-        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-        response = await client.messages.create(
-            model=settings.llm_model,
-            max_tokens=2048,
-            temperature=0.2,
+        llm = LLMClient(max_tokens=2048, temperature=0.2, timeout_s=settings.llm_timeout_seconds)
+        response = await llm.messages(
             system=_CANDIDATE_SYSTEM,
-            tools=[_CANDIDATE_TOOL],
             messages=[{"role": "user", "content": user_message}],
+            tools=[_CANDIDATE_TOOL],
         )
 
-        candidates: list[dict[str, Any]] = []
-        for block in response.content:
-            if block.type == "tool_use" and block.name == "submit_candidates":
-                candidates = block.input.get("candidates", [])
-                break
+        candidates = (
+            LLMClient.extract_tool_input(response, "submit_candidates") or {}
+        ).get("candidates", [])
 
         if not candidates:
             candidates = _default_candidates(wq)

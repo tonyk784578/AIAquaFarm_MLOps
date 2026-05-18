@@ -91,6 +91,22 @@ AIAquafarm은 이 모든 과정을 **AI가 자동으로 감지·예측·제어**
     │  optimization_subgraph:                      │
     │    gather_outputs → generate_candidates      │
     │    → twin_sim (ODE) → select_optimal         │
+    │                                              │
+    │  + Redis 라이브 이벤트 (`agents:events`)      │
+    │  + SSE 스트림 `/events/stream`                │
+    └──────────────────────────────────────────────┘
+           │
+    ┌──────▼───────────────────────────────────────┐
+    │  MLOps 서비스                                 │
+    │                                              │
+    │  mlops_scheduler (상시):                      │
+    │    AutoML 60min + Drift 15min cycle          │
+    │    → audit.jsonl + MLflow registry           │
+    │                                              │
+    │  mlops_api (FastAPI :8002):                  │
+    │    /registry  /audit  /drift  (조회)         │
+    │    /retrain  /promote  /deploy  (관리자)      │
+    │    회로차단기 + 캐시 폴백 → MLflow            │
     └──────────────────────────────────────────────┘
            │
     ┌──────▼───────────────────────────────────────┐
@@ -98,6 +114,11 @@ AIAquafarm은 이 모든 과정을 **AI가 자동으로 감지·예측·제어**
     │  PostgreSQL/TimescaleDB  Redis (pub/sub)     │
     │  MLflow (모델 레지스트리)  S3 (데이터 레이크) │
     └──────────────────────────────────────────────┘
+
+  관측성 (선택적 스택):
+  Prometheus :9090  ← /metrics (backend/agents/mlops_api)
+  Grafana    :3001
+  OTel Collector :4317  ← OTLP traces
 ```
 
 ### 실시간 데이터 파이프라인
@@ -119,6 +140,7 @@ Redis 채널: wq:{tank_id}
 | `wq:{tank_id}` | 수질 센서 데이터 실시간 스트림 |
 | `cmd:{tank_id}:{device}` | 제어 명령 (feeder·pump·aeration·exchange) |
 | `events:alerts` | 알림 이벤트 브로드캐스트 |
+| `agents:events` | 에이전트 노드 진행·결정·실행 라이브 이벤트 (SSE 소스) |
 
 ---
 
@@ -142,12 +164,18 @@ Redis 채널: wq:{tank_id}
 | | ResNet18 (분류), LSTM/TimesNet (시계열) | 모델 아키텍처 |
 | **MLOps** | MLflow 2.13+ | 실험 추적·모델 레지스트리 |
 | | boto3, S3 | 데이터 레이크 |
+| | FastAPI (mlops_api :8002) | 레지스트리/감사/드리프트 + 관리 액션 |
+| | `schedule` + 회로차단기 + JSONL 감사 로그 | AutoML/Drift 주기 실행 |
 | **데이터베이스** | PostgreSQL 15 + TimescaleDB | 시계열 hypertable |
-| **캐시·브로커** | Redis 7 | pub/sub, WebSocket fan-out, 캐싱 |
+| **캐시·브로커** | Redis 7 | pub/sub, WebSocket fan-out, 상태 저장, 라이브 이벤트 |
+| **관측성 (선택)** | Prometheus + Grafana + OpenTelemetry Collector | `/metrics` + OTLP 트레이스 |
+| **신뢰성** | tenacity, slowapi, pure-Python 회로차단기 | 재시도·레이트리미트·MLflow 폴백 |
 | **컨테이너** | Docker Compose | 개발·스테이징 환경 |
 | | Kubernetes + kustomize | 프로덕션 오케스트레이션 |
-| **CI/CD** | GitHub Actions | lint → test → docker build |
-| **코드 품질** | ruff, structlog, pytest | 린터·로깅·테스트 |
+| **CI/CD** | GitHub Actions (lint·secret-scan·backend/agents/mlops/frontend tests·docker-build) | 멀티잡 게이트 |
+| **시크릿 관리** | sealed-secrets 또는 SOPS+age | k8s 시크릿 암호화 |
+| **테스트** | pytest, pytest-asyncio, fakeredis · Vitest, RTL · Playwright | 백엔드·프론트·E2E |
+| **코드 품질** | ruff, structlog, gitleaks | 린터·구조화 로깅·시크릿 스캔 |
 
 ---
 
@@ -282,8 +310,13 @@ asyncio.run(main())
 | **대시보드** | <http://localhost> | 메인 React 앱 |
 | **API Swagger** | <http://localhost:8000/api/docs> | REST API 문서 |
 | **API ReDoc** | <http://localhost:8000/api/redoc> | 대안 API 문서 |
+| **Backend 메트릭** | <http://localhost:8000/metrics> | Prometheus 스크랩 대상 |
 | **Agents API** | <http://localhost/agents/health> | nginx 통해 접근 |
+| **Agents SSE** | <http://localhost/agents/events/stream> | 라이브 이벤트 스트림 |
+| **MLOps API** | <http://localhost:8002/health> | 내부망 전용 (브라우저는 backend 프록시 경유) |
 | **MLflow UI** | <http://localhost:5000> | 모델 레지스트리·실험 |
+| **Prometheus** | <http://localhost:9090> | 관측성 스택 기동 시 |
+| **Grafana** | <http://localhost:3001> | 관측성 스택 기동 시 (admin/admin) |
 
 > **참고**: agents 서비스(포트 8001)는 호스트에 직접 노출되지 않습니다.
 > 외부에서는 nginx의 `/agents/` 경로를 통해 접근합니다.
@@ -319,11 +352,37 @@ make shell-agents    # 에이전트 컨테이너 bash
 # 코드 품질
 make lint            # ruff 린터 실행
 make format          # ruff 포맷터 실행
-make test            # pytest 실행
+make test            # pytest 실행 (백엔드)
 make test-cov        # 커버리지 포함 테스트
+
+# API 타입 동기화 + 데이터 보호
+make codegen         # /openapi.json → frontend/src/types/api.d.ts 재생성
+make backup          # 로컬 pg_dump (ARGS=--upload 로 S3 업로드)
 
 # 정리
 make clean           # 컨테이너·볼륨·이미지 삭제
+```
+
+### 프론트엔드 테스트
+
+```bash
+cd frontend
+npm install
+npm run type-check         # tsc --noEmit
+npm test                   # Vitest (jsdom 환경, 30+ 케이스)
+npm run test:coverage      # v8 커버리지 리포트 → coverage/index.html
+npm run e2e:install        # Playwright Chromium 다운로드 (1회)
+npm run e2e                # E2E (stack must be up first)
+```
+
+### 관측성 스택 (선택)
+
+```bash
+# Prometheus + Grafana + OTel Collector 동시 기동
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+# → http://localhost:9090 (Prometheus)
+# → http://localhost:3001 (Grafana, admin/admin)
+# → otel-collector:4317 (OTLP gRPC — backend/agents/mlops_api 자동 송신)
 ```
 
 ### 합성 학습 데이터 생성 (컨테이너 없이)
@@ -487,6 +546,8 @@ AIAquafarm_MLOps/
 LangGraph 런타임 오케스트레이션 전용 페이지. `/mlops`에서 분리되어 농장 운영자/SRE 시점의 가시성을 제공합니다.
 
 - **실시간 상태 카드**: 에이전트 온라인 여부, 최종 사이클 실행 시각, 결정/실행 건수, 비-`no_action` 조치 수, 수동 실행 버튼
+- **라이브 이벤트 스트림 (SSE)**: `/agents/events/stream` 으로 노드 시작/완료, 결정, 명령 실행, 오류를 실시간 수신 (Redis pub/sub 기반, 자동 재연결 + 지수 백오프)
+- **최근 사이클 이력**: Redis 영속화된 직전 20개 사이클을 카드 타임라인으로 표시 (오류/조치 색상 코딩)
 - **3-스윔레인 SCADA 토폴로지**:
   - 좌측 **데이터 소스**: 수질 센서·성장 카메라(YOLOv8)·급이 카메라(ResNet18) 카드 — 각 메트릭이 임계값 색상(녹/주황/적)으로 표시
   - 중앙 **관리 그래프**: `START → collect_data → analyse_situation → (needs_action) → execute_commands → generate_report → END`. 직전 사이클이 탄 분기는 보라색 실선, 미선택 분기는 점선
@@ -500,8 +561,12 @@ LangGraph 런타임 오케스트레이션 전용 페이지. `/mlops`에서 분�
 모델 자산 관리 전용 페이지. 에이전트 콘텐츠는 `/agents`로 이관되었고 상단에 cross-link 카드를 두었습니다.
 
 - Production 모델 상태 (FishDetection / FeedingActivityClassifier / WaterQualityPredictor)
+- **MLflow 레지스트리 라이브 테이블**: 모델별 Production/Staging 버전 + 전체 버전수, mlops_api `/registry` 호출 (회로차단기 + 30s 캐시 폴백)
+- **드리프트 패널**: 모델별 max/mean PSI + feature top-5 (스케줄러 15분 주기 결과)
+- **MLOps 감사 로그 타임라인**: automl/drift/promotion/deployment/error 50건 + kind 필터
+- **관리자 액션 버튼** (superuser 전용): 재훈련(dry-run) / 승격(run_id 입력) / 엣지 배포 — confirm 모달 + 결과 토스트
 - 모델 생명주기 다이어그램 (None → Staging → Production → Archived)
-- PSI 드리프트 기준 (안정/경고/재훈련) + AutoML 6시간 주기 설명
+- PSI 드리프트 기준 (안정/경고/재훈련) + AutoML 60min·Drift 15min 주기 설명
 - A/B 테스트 (Canary 10%·해시 기반 결정적 라우팅) 사용법
 - AutoML 재훈련 임계값 표 (모델별 샘플·PSI·데이터 소스)
 
@@ -605,6 +670,15 @@ VirtualSensor.step()          # 5초마다 ODE 적분
 
 ## 12. MLOps 파이프라인
 
+### 런타임 구성
+
+MLOps 는 라이브러리 + 두 개의 독립 서비스로 구성됩니다.
+
+- **`mlops_scheduler`** (상시 컨테이너) — AutoML 60분 + Drift 15분 사이클, 결과를 JSONL 감사 로그에 기록
+- **`mlops_api`** (FastAPI :8002) — 레지스트리/감사/드리프트 조회 + 관리 액션 (재훈련/승격/배포)
+- **`cronjob/automl-pipeline`** (k8s, 6h) — 안전망: 스케줄러 다운 시에도 주기 실행
+- **`cronjob/postgres-backup`** (k8s, 매일 03시) — `pg_dump` → S3 (`aquafarm` + `aquafarm_mlflow`)
+
 ### 모델 생명주기
 
 ```text
@@ -622,6 +696,19 @@ None → Staging → Production → Archived
 ### QualityGate
 
 재학습된 모델은 `ModelEvaluator`의 지표 임계값을 통과해야 `Production`으로 승격됩니다.
+
+### 회로차단기 + 캐시 폴백
+
+`mlops_api` 가 MLflow 를 호출할 때 일시 장애에 대비해 3-상태 회로차단기
+(CLOSED/OPEN/HALF_OPEN)와 30초 TTL 응답 캐시를 통과합니다. MLflow 다운 시
+대시보드는 마지막 스냅샷을 계속 표시 (`circuit_open` 로그 + `was_fallback`
+플래그). 30초 후 자동 복구 시도.
+
+### 감사 로그
+
+모든 AutoML/Drift/Promotion/Deployment 이벤트는 JSONL 로 영속화됩니다
+(`/data/audit/automl.jsonl`, 8 MiB 도달 시 자동 로테이션). `/api/v1/mlops/audit`
+로 조회.
 
 ---
 
@@ -675,6 +762,16 @@ POST /api/v1/auth/login  →  httpOnly 쿠키 설정
 | `DEBUG` | - | false | SQLAlchemy 쿼리 로깅 |
 | `MLFLOW_TRACKING_URI` | - | http://mlflow:5000 | MLflow 서버 주소 |
 | `DEFAULT_TANK_IDS` | - | TANK-01,TANK-02,TANK-03 | 모니터링 수조 목록 |
+| `MLOPS_API_URL` | - | http://mlops_api:8002 | 백엔드가 프록시할 MLOps API |
+| `MLOPS_AUTOML_INTERVAL_MIN` | - | 60 | AutoML 사이클 주기 (분) |
+| `MLOPS_DRIFT_INTERVAL_MIN` | - | 15 | Drift 사이클 주기 (분) |
+| `MLOPS_DRY_RUN` | - | true | 학습 서브프로세스 실제 실행 여부 |
+| `MLOPS_CORS_ORIGINS` | - | (빈 값) | mlops_api 직접 호출 허용 origin (기본 차단) |
+| `MAX_REQUEST_BYTES` | - | 1048576 | HTTP 요청 본문 상한 (백엔드 1 MiB) |
+| `OBSERVABILITY_METRICS_ENABLED` | - | true | `/metrics` 노출 토글 |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | - | (빈 값) | 설정 시 OTel 트레이스 송신 활성화 |
+| `OTEL_EXPORTER_OTLP_INSECURE` | - | true | OTLP gRPC TLS 끄기 |
+| `DEPLOY_ENV` / `SERVICE_VERSION` | - | dev / 0.1.0 | OTel resource attributes |
 
 > **CORS_ORIGINS 주의**: 브라우저는 포트 80을 생략하므로 `http://localhost:80`과 `http://localhost` 모두 추가해야 합니다.
 
@@ -693,8 +790,12 @@ POST /api/v1/auth/login  →  httpOnly 쿠키 설정
 - [ ] Nginx HTTPS 설정 (Let's Encrypt 또는 인증서)
 - [ ] MLflow 외부 접근 차단 또는 인증 추가
 - [ ] S3 버킷 및 접근 키 설정 (데이터 레이크)
-- [ ] PostgreSQL 정기 백업 정책 수립
-- [ ] K8s Secrets에 민감값 주입 (Sealed Secrets / External Secrets)
+- [ ] PostgreSQL 정기 백업 활성화 — `infra/k8s/postgres/backup-cronjob.yaml` (k8s) 또는 `make backup` (compose)
+- [ ] K8s Secrets에 민감값 주입 — sealed-secrets 또는 SOPS 워크플로 ([infra/k8s/secrets/README.md](infra/k8s/secrets/README.md))
+- [ ] `MLOPS_CORS_ORIGINS` 가 빈 값임을 확인 (브라우저 직접 호출 차단)
+- [ ] Prometheus + Grafana 스택 기동 + 알람룰 정의
+- [ ] `OTEL_EXPORTER_OTLP_ENDPOINT` 를 사내 트레이싱 백엔드로 설정
+- [ ] gitleaks CI 잡이 master 보호 룰에 포함됨을 확인
 - [ ] HPA(수평 파드 오토스케일러) 임계값 검토
 
 ---
@@ -709,6 +810,11 @@ POST /api/v1/auth/login  →  httpOnly 쿠키 설정
 - [x] **QA**: Docker 전체 스택 빌드·실행 검증, make migrate·seed 통과, 보안 버그 수정
 - [x] **UI 개선**: 수질 전용 상세 페이지(`/water-quality`), 다크 모드 토글, Mock 데이터 모드, Recharts 기반 차트, Zustand 상태관리 추가
 - [x] **UI 정보구조 재편**: 대시보드 상단 `SystemFlowPanel`(엣지→백엔드→AI→에이전트→제어 5단계 파이프라인), 사이드바 5개 의미 그룹화(개요·실시간 운영·AI 분석·AI 운영·관리), `/mlops`에서 LangGraph 콘텐츠를 분리한 신규 `/agents` 페이지 — 3-스윔레인 SCADA 토폴로지(데이터 소스·에이전트 그래프·물리 액추에이터) + 결정 규칙 패널 + 사이클 트레이스
+- [x] **MLOps 런타임 + 에이전트 신뢰성**: `mlops_scheduler` 상시 컨테이너 + `mlops_api` FastAPI :8002 (회로차단기·캐시 폴백·감사 로그), 에이전트 Redis 상태 영속화 + SSE 라이브 이벤트 + 다중 탱크 스케줄러 + tenacity 재시도
+- [x] **관측성**: backend/agents/mlops_api 3개 서비스에 Prometheus `/metrics` + OpenTelemetry OTLP 트레이싱, docker-compose 관측성 스택(Prometheus/Grafana/OTel Collector)
+- [x] **보안 하드닝**: control/alerts/mlops admin 엔드포인트 레이트리미트 (`X-Service-Key` exempt), 요청 본문 1 MiB 제한, Nginx CSP + HSTS + X-Frame-Options, 시크릿 관리 워크플로(sealed-secrets/SOPS)
+- [x] **품질 게이트**: 백엔드/agents/mlops/프론트 4-갈래 pytest + Vitest + RTL, Playwright E2E 스모크, gitleaks 시크릿 스캔, openapi-typescript 타입 코드젠
+- [x] **운영 자산**: 글로벌 ErrorBoundary, useWebSocket/useEventSource 재연결 검증, Postgres 백업 CronJob (S3), [`docs/runbook.md`](docs/runbook.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), PR 템플릿
 
 ---
 
@@ -737,6 +843,19 @@ POST /api/v1/auth/login  →  httpOnly 쿠키 설정
 - **실제 AI 모델 미탑재**: 모델 체크포인트 없이 실행 시 mock 값 반환 (정상 동작)
 - **학습 데이터 필요**: `mlops/training/train_*.py` 실행하거나 합성 데이터 스크립트 활용
 - **에이전트 반복 401**: `ANTHROPIC_API_KEY`·`INTERNAL_API_KEY` 미설정 시 에이전트 동작 제한
+
+---
+
+## 18. 운영 + 협업 문서
+
+- [`docs/runbook.md`](docs/runbook.md) — 인시던트 대응 절차 (9 시나리오 + 2 루틴)
+- [`docs/architecture.md`](docs/architecture.md) — 시스템 아키텍처 상세
+- [`docs/api-spec.md`](docs/api-spec.md) — REST API 스펙
+- [`docs/setup-guide.md`](docs/setup-guide.md) — 초기 셋업 가이드
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — 브랜치/커밋 규칙, 로컬 워크플로, CI 잡 표
+- [`CHANGELOG.md`](CHANGELOG.md) — 버전별 변경 이력
+- [`CLAUDE.md`](CLAUDE.md) — 코드베이스 규약 (서비스 맵, Redis 채널, 인증 계층)
+- [`infra/k8s/secrets/README.md`](infra/k8s/secrets/README.md) — 시크릿 관리 워크플로 (sealed-secrets / SOPS)
 
 ---
 

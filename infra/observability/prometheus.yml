@@ -1,0 +1,35 @@
+# Prometheus scrape config for the docker-compose observability stack.
+# Each FastAPI service exposes /metrics via prometheus-fastapi-instrumentator.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: aquafarm
+
+scrape_configs:
+  - job_name: aquafarm-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["backend:8000"]
+        labels:
+          service: backend
+
+  - job_name: aquafarm-agents
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["agents:8001"]
+        labels:
+          service: agents
+
+  - job_name: aquafarm-mlops-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["mlops_api:8002"]
+        labels:
+          service: mlops-api
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

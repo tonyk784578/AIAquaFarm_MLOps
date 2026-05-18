@@ -33,7 +33,14 @@ resources:
   - agents/deployment.yaml
   - agents/service.yaml
 
-  # Batch
+  # MLOps services (long-running scheduler + observability API)
+  - mlops/scheduler-deployment.yaml
+  - mlops/api-deployment.yaml
+
+  # Data resilience — nightly Postgres + MLflow dumps to S3
+  - postgres/backup-cronjob.yaml
+
+  # Batch (safety-net CronJob — also runs every 6 h)
   - mlops/cronjob.yaml
 
   # Frontend

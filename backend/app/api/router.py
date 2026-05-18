@@ -11,6 +11,7 @@ from app.api.v1 import (
     dashboard,
     feeding_analyse,
     growth_detect,
+    mlops,
     monitoring,
     settings,
     water_quality_predict,
@@ -87,4 +88,11 @@ api_router.include_router(
     prefix="/v1/feeding",
     tags=["Feeding AI"],
     dependencies=[Depends(require_auth_or_service)],
+)
+# MLOps proxy — read endpoints for browser users, write endpoints for superusers only
+api_router.include_router(
+    mlops.router,
+    prefix="/v1/mlops",
+    tags=["MLOps"],
+    dependencies=[Depends(get_current_user)],
 )

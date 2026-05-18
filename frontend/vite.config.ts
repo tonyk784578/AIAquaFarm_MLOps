@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
@@ -22,6 +23,20 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/agents/, ''),
       },
+    },
+  },
+  // ── Vitest ───────────────────────────────────────────────────────────────
+  // Tests live in src/**/*.test.{ts,tsx} and run under jsdom. The setup file
+  // registers @testing-library/jest-dom matchers and stubs EventSource.
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.ts'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      exclude: ['src/test/**', 'src/mocks/**', '**/*.d.ts'],
     },
   },
 })

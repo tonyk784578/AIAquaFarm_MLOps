@@ -19,6 +19,7 @@ class AgentSettings(BaseSettings):
     llm_model: str = "claude-sonnet-4-6"
     llm_temperature: float = 0.0
     llm_max_tokens: int = 4096
+    llm_timeout_seconds: float = 60.0
 
     # Services
     backend_url: str = "http://backend:8000"
@@ -31,6 +32,18 @@ class AgentSettings(BaseSettings):
     # Agent behaviour
     max_agent_iterations: int = 10
     agent_timeout_seconds: int = 120
+    cycle_interval_seconds: int = Field(
+        default=300,
+        description="Scheduler cadence between full management cycles (seconds).",
+    )
+    default_tank_ids: list[str] = Field(
+        default_factory=lambda: ["TANK-01", "TANK-02", "TANK-03"],
+        description="Tanks the scheduler iterates over each cycle.",
+    )
+    history_size: int = Field(
+        default=50,
+        description="Max retained entries per history list in Redis.",
+    )
     log_level: str = "info"
 
 

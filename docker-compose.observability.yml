@@ -1,0 +1,64 @@
+# Optional observability stack — Prometheus + Grafana + OpenTelemetry Collector.
+#
+# Bring up alongside the main stack:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+#
+# Endpoints:
+#   - Prometheus UI : http://localhost:9090
+#   - Grafana       : http://localhost:3001 (admin / admin)
+#   - OTel gRPC     : otel-collector:4317 (used by backend/agents/mlops_api)
+#
+# To enable tracing in the Python services, set in .env:
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: aquafarm_prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: aquafarm_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.108.0
+    container_name: aquafarm_otel_collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./infra/observability/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+
+volumes:
+  prometheus_data:
+  grafana_data:

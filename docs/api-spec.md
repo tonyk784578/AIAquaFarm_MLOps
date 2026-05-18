@@ -345,29 +345,160 @@ httpOnly 쿠키 삭제.
 
 ### Agents (LangGraph, port 8001)
 
+`/run` 과 `/optimize` 는 `X-Service-Key` 헤더가 필수입니다 (`require_service_key`). 그 외 조회 엔드포인트는 사내 네트워크 내에서 인증 없이 접근 가능합니다.
+
 #### GET /health
-에이전트 서버 헬스체크.
+에이전트 서버 헬스체크. 응답에 `management_graph` 가용성, `redis_connected`, `event_channel`, `tanks`, `cycle_interval_s`, `version` 포함.
 
 #### POST /run
-전체 관리 사이클 실행 (데이터 수집 → AI 분석 → 제어 명령 → 보고서).
+전체 관리 사이클 실행 (데이터 수집 → AI 분석 → 제어 명령 → 보고서). `X-Service-Key` 필수.
+
+**Query**: `tank_id=ALL` (기본값) — 다중 탱크 모드에서는 스케줄러가 자동으로 `DEFAULT_TANK_IDS` 순회.
 
 **Response**:
 ```json
 {
-  "status": "success",
-  "report": "Management cycle #1 complete. Actions taken: ...",
-  "decisions": [...],
-  "executed_commands": [...]
+  "status": "ok",
+  "tank_id": "ALL",
+  "final_report": "Management cycle #1 complete. Actions taken: ...",
+  "decisions": 3,
+  "executed": 2
 }
 ```
 
 #### POST /optimize
-최적화 서브그래프만 단독 실행 (AI 모듈 수집 → 후보 생성 → 디지털 트윈 → 최적 선택).
+최적화 서브그래프만 단독 실행 (AI 모듈 수집 → 후보 생성 → 디지털 트윈 → 최적 선택). `X-Service-Key` 필수.
 
-**Body** (선택):
+**Body**:
 ```json
-{ "tank_id": "TANK-01" }
+{
+  "tank_id": "TANK-01",
+  "ammonia_ppm": 0.4,
+  "nitrite_ppm": 0.08,
+  "dissolved_oxygen_mgl": 7.0,
+  "temperature_c": 23.0,
+  "water_exchange_rate_pct": 5.0
+}
 ```
+
+#### GET /status
+
+가장 최근 관리 사이클 결과 (Redis 영속화).
+
+#### GET /optimization/status?tank_id=TANK-01
+
+탱크별 최근 최적화 결과. `tank_id` 미지정 시 전체 최근 1건 반환.
+
+#### GET /history?n=20
+
+최근 관리 사이클 N개 이력 (Redis LIST). 최대 200.
+
+#### GET /history/optimization?n=20
+
+최근 최적화 사이클 N개 이력.
+
+#### GET /events/stream
+
+**Server-Sent Events** — 에이전트 노드 진행 + 결정 + 명령 실행 이벤트 라이브 스트림. 응답 헤더 `Content-Type: text/event-stream`.
+
+각 이벤트는 `event: agent\ndata: <json>` 또는 `event: ping\ndata:` (keepalive). JSON 페이로드:
+
+```json
+{
+  "ts": "2026-05-18T10:00:00+00:00",
+  "kind": "node_completed",
+  "tank_id": "TANK-01",
+  "data": { "node": "analyse_situation", "duration_ms": 4210 }
+}
+```
+
+이벤트 종류: `cycle_started`, `cycle_completed`, `node_started`, `node_completed`, `decision_made`, `command_executed`, `command_failed`, `optimization_started`, `optimization_completed`, `error`.
+
+브라우저는 `/agents/events/stream` 경로로 nginx 를 통해 접근 (`useEventSource` 훅).
+
+---
+
+### MLOps API (proxied at /api/v1/mlops/*)
+
+브라우저는 백엔드 프록시를 통해 호출 (쿠키 인증). 백엔드가 자동으로 `X-Service-Key` 를 주입해 `mlops_api:8002` 로 포워딩.
+
+#### GET /api/v1/mlops/registry
+
+MLflow 등록 모델 전체 목록 + Stage 별 버전.
+
+**Response**:
+```json
+{
+  "models": [
+    {
+      "name": "WaterQualityPredictor",
+      "production_version": "12",
+      "staging_version": "13",
+      "versions": [
+        {"name": "WaterQualityPredictor", "version": "12", "stage": "Production", "run_id": "abc123..."}
+      ]
+    }
+  ]
+}
+```
+
+회로차단기 + 30초 캐시 폴백 적용 — MLflow 다운 시 마지막 스냅샷 반환 (응답은 동일 형태).
+
+#### GET /api/v1/mlops/audit?n=50&kind=automl&model=WaterQualityPredictor
+
+MLOps 감사 로그 조회. `kind` 필터: `automl` | `drift` | `promotion` | `rollback` | `deployment` | `training` | `error`. `n` 1–1000.
+
+**Response**:
+```json
+{
+  "events": [
+    {
+      "ts": "2026-05-18T10:00:00+00:00",
+      "kind": "drift",
+      "model": "WaterQualityPredictor",
+      "data": {
+        "max_psi": 0.234,
+        "should_retrain": true,
+        "features": [{"feature": "ammonia_ppm", "psi": 0.31, "status": "drift"}]
+      }
+    }
+  ],
+  "count": 1
+}
+```
+
+#### GET /api/v1/mlops/drift
+
+모델별 최신 드리프트 리포트 (감사 로그 `latest("drift")` 기반).
+
+#### POST /api/v1/mlops/retrain
+
+**Superuser only.** 단일 모델 재훈련 사이클 트리거. Rate limit: 10/분.
+
+**Body**:
+```json
+{ "model": "WaterQualityPredictor", "dry_run": true }
+```
+
+#### POST /api/v1/mlops/promote
+
+**Superuser only.** 특정 MLflow run 을 Production 으로 승격. Rate limit: 10/분.
+
+**Body**:
+```json
+{ "model": "WaterQualityPredictor", "run_id": "abc123...", "force": false }
+```
+
+#### POST /api/v1/mlops/deploy
+
+**Superuser only.** Production 모델을 엣지 디바이스에 배포 (ONNX export → SCP → smoke test → 실패 시 롤백). Rate limit: 10/분.
+
+**Body**:
+```json
+{ "model": "WaterQualityPredictor" }
+```
+
+`model: null` 또는 누락 시 전체 모델 배포.
 
 ---
 
@@ -408,15 +539,20 @@ httpOnly 쿠키 삭제.
 
 | HTTP Status | 설명 |
 |-------------|------|
-| 401 | 인증 토큰 없음 또는 만료 |
+| 401 | 인증 토큰 없음 또는 만료 (또는 잘못된 `X-Service-Key`) |
 | 403 | 권한 없음 (슈퍼유저 전용 또는 등록 비활성) |
 | 404 | 리소스 없음 |
 | 409 | 중복 (username/email 이미 존재) |
+| 413 | 요청 본문 크기 초과 (기본 1 MiB; `MAX_REQUEST_BYTES` 로 조정) |
 | 422 | 입력 유효성 오류 |
 | 429 | Rate limit 초과 |
-| 503 | Redis 연결 실패 (제어 명령) |
+| 501 | sse-starlette 미설치 (에이전트 `/events/stream` 한정) |
+| 503 | Redis 연결 실패 (제어 명령) 또는 mlops_api → MLflow 회로차단기 OPEN + 캐시 없음 |
 
 ```json
 { "detail": "Alert 123 not found" }
 { "detail": [{ "loc": ["body", "tank_id"], "msg": "string does not match regex" }] }
+{ "detail": "request body too large", "max_bytes": 1048576, "observed_bytes": 1234567 }
 ```
+
+**Rate limit 헤더**: 429 응답에는 slowapi 가 `Retry-After` 헤더를 첨부합니다. `is_internal_service` 가 `X-Service-Key` 일치를 확인하면 `/control/*`, `/alerts/` 엔드포인트는 슬로어피를 우회합니다.
