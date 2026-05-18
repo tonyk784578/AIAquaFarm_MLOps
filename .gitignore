@@ -74,6 +74,8 @@ secrets/
 logs/
 *.log
 
-# Git push scripts (contains PAT — do not commit)
+# Git push scripts — the script itself no longer holds the PAT, but it's
+# kept untracked so per-machine tweaks (REPO_OWNER, branch, etc.) don't
+# pollute the repo. The PAT lives in $GITHUB_PAT or ~/.aquafarm_pat
+# (outside the repo entirely) — see git-scripts/push.sh header.
 git-scripts/push.sh
-git-scripts/push.bat
